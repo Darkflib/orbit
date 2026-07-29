@@ -26,7 +26,7 @@ HTTP, not opened via `file://`, because it uses ES module workers and `fetch`.
 | `src/scene.js` | three.js renderer, camera, Earth, atmosphere, stars |
 | `src/satellites.js` | Point cloud, selection, orbit/track/footprint overlays |
 | `src/worker.js` | SGP4 propagation Web Worker |
-| `src/tle.js` | CelesTrak fetching, parsing, caching |
+| `src/gp.js` | CelesTrak OMM (GP) fetching, parsing, caching |
 | `src/utils.js` | Coordinate/time/formatting helpers |
 | `src/constants.js` | Scale, layers, colours, endpoints |
 

@@ -6,7 +6,7 @@
 // Running this off the main thread keeps rendering and interaction at 60fps
 // even with many thousands of satellites.
 // ---------------------------------------------------------------------------
-import * as satellite from 'https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/+esm';
+import * as satellite from 'https://cdn.jsdelivr.net/npm/satellite.js@7.1.0/+esm';
 
 // Keep in sync with constants.js (worker cannot use the page's import map).
 const KM_PER_UNIT = 1000;
@@ -17,8 +17,14 @@ self.onmessage = (e) => {
   const msg = e.data;
 
   if (msg.type === 'init') {
-    // msg.sats: [{ l1, l2 }, ...] already validated on the main thread.
-    satrecs = msg.sats.map((s) => satellite.twoline2satrec(s.l1, s.l2));
+    // msg.sats: [omm, ...] — OMM objects already validated on the main thread.
+    satrecs = msg.sats.map((omm) => {
+      try {
+        return satellite.json2satrec(omm);
+      } catch {
+        return null;
+      }
+    });
     self.postMessage({ type: 'ready', count: satrecs.length });
     return;
   }
@@ -30,7 +36,9 @@ self.onmessage = (e) => {
     const positions = new Float32Array(n * 3);
 
     for (let i = 0; i < n; i++) {
-      const pv = satellite.propagate(satrecs[i], date);
+      const sr = satrecs[i];
+      if (!sr) continue;
+      const pv = satellite.propagate(sr, date);
       const p = pv && pv.position;
       if (!p) {
         // Decayed / propagation error — park it at the origin (hidden inside Earth).

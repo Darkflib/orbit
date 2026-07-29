@@ -113,15 +113,15 @@ export class SatelliteField {
   }
 
   // ---- Loading -------------------------------------------------------------
-  // Validate TLEs on the main thread (build satrecs, discard broken ones), fill
-  // the geometry attributes, and hand the survivors to the worker.
+  // Validate OMM records on the main thread (build satrecs, discard broken
+  // ones), fill the geometry attributes, and hand the survivors to the worker.
   load(records) {
     const valid = [];
     const satrecs = [];
     for (const rec of records) {
       let sr;
       try {
-        sr = satellite.twoline2satrec(rec.l1, rec.l2);
+        sr = satellite.json2satrec(rec.omm);
       } catch {
         continue;
       }
@@ -158,7 +158,7 @@ export class SatelliteField {
 
     this.worker.postMessage({
       type: 'init',
-      sats: valid.map((r) => ({ l1: r.l1, l2: r.l2 })),
+      sats: valid.map((r) => r.omm),
     });
 
     this.deselect();
