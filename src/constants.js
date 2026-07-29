@@ -24,8 +24,11 @@ export const CELESTRAK_URL = (group) =>
 // number appears in more than one group.
 export const LAYERS = [
   {
+    // CelesTrak's "stations" group is the ISS and CSS complexes plus their
+    // modules, visiting crew/cargo craft, and co-orbiting smallsats/debris —
+    // not ~2 standalone stations. Label it for what it actually contains.
     id: 'stations',
-    label: 'Space stations',
+    label: 'Stations & crewed craft',
     color: '#ef4444',
     groups: ['stations'],
     priority: 0,
