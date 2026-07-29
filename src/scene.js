@@ -123,6 +123,12 @@ function createEarth() {
         color += vec3(0.35, 0.18, 0.08) * (1.0 - terminator) * dayAmount * 0.5;
 
         gl_FragColor = vec4(color, 1.0);
+        // The day/night textures are sampled in linear space (they are tagged
+        // sRGB, so the GPU decodes on read). A raw ShaderMaterial does not get
+        // the renderer's automatic output conversion, so re-encode to the
+        // output colour space here — otherwise the lit day side renders far
+        // too dark and reads as permanent night.
+        #include <colorspace_fragment>
       }
     `,
   });
