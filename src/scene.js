@@ -114,13 +114,13 @@ function createEarth() {
         // City lights glow on the dark side; oceans keep a faint cool sheen.
         vec3 lights = texture2D(uNight, vUv).rgb;
         float ocean = texture2D(uSpecular, vUv).r;
-        vec3 nightColor = dayColor * 0.03 + vec3(0.01, 0.03, 0.07) * (0.3 + ocean * 0.5);
+        vec3 nightColor = dayColor * 0.006 + vec3(0.003, 0.006, 0.014) * (0.3 + ocean * 0.5);
         nightColor += lights * vec3(1.0, 0.85, 0.55) * 1.6;
 
         vec3 color = mix(nightColor, dayColor, dayAmount);
         // Subtle warm scattering along the terminator.
         float terminator = smoothstep(0.0, 0.25, abs(sun));
-        color += vec3(0.35, 0.18, 0.08) * (1.0 - terminator) * dayAmount * 0.5;
+        color += vec3(0.35, 0.18, 0.08) * (1.0 - terminator) * dayAmount * 0.35;
 
         gl_FragColor = vec4(color, 1.0);
         // The day/night textures are sampled in linear space (they are tagged
