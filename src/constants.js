@@ -10,14 +10,18 @@ export const EARTH_RADIUS = EARTH_RADIUS_KM / KM_PER_UNIT; // ~6.371 units
 export const DEG2RAD = Math.PI / 180;
 export const RAD2DEG = 180 / Math.PI;
 
-// TLE data is only refetched every this many milliseconds. In between, SGP4
+// GP data is only refetched every this many milliseconds. In between, SGP4
 // propagation runs entirely in the browser — no further network calls.
-export const TLE_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
-export const TLE_CACHE_PREFIX = 'orbit.tle.';
+export const GP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
+export const GP_CACHE_PREFIX = 'orbit.gp.';
 
 // CelesTrak general-perturbations endpoint. CORS-enabled, no key required.
+// We request OMM in JSON: the legacy TLE format cannot represent the 6-digit
+// catalog numbers CelesTrak began issuing in 2026 (5-digit space exhausted),
+// so new objects are only available via OMM. See:
+// https://celestrak.org/NORAD/documentation/gp-data-formats.php
 export const CELESTRAK_URL = (group) =>
-  `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`;
+  `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=JSON`;
 
 // Satellite layers. Each pulls one or more CelesTrak GROUPs and is drawn with
 // its own colour. `priority` resolves duplicates (lower wins) when a catalog

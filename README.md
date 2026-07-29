@@ -6,8 +6,9 @@
 ![Data: CelesTrak](https://img.shields.io/badge/data-CelesTrak-38bdf8.svg)
 
 A frontend-only, real-time 3D visualization of the world's active satellites.
-It fetches [CelesTrak](https://celestrak.org/) TLE orbital elements once, then
-uses [satellite.js](https://github.com/shashwatak/satellite-js) (an SGP4
+It fetches [CelesTrak](https://celestrak.org/) orbital elements once — as OMM
+(Orbit Mean-Elements Message) records in JSON — then uses
+[satellite.js](https://github.com/shashwatak/satellite-js) (an SGP4
 implementation) to propagate every satellite's position **directly in the
 browser** — so thousands of satellites move continuously, frame by frame, with
 essentially zero network traffic.
@@ -20,8 +21,13 @@ coverage footprint.
 ## Highlights
 
 - **No backend, no API key, no rate limits.** All data comes from CelesTrak's
-  public GP endpoint (CORS-enabled). TLEs are cached in `localStorage` and only
-  refetched every 2 hours.
+  public GP endpoint (CORS-enabled). Elements are cached in `localStorage`
+  (compactly encoded) and only refetched every 2 hours.
+- **OMM, not legacy TLE.** CelesTrak exhausted 5-digit catalog numbers in 2026;
+  new objects (6-digit IDs) are no longer published as TLEs. Orbit uses the OMM
+  JSON format via `satellite.js` `json2satrec`, so it keeps working as the
+  catalog grows. See
+  [CelesTrak's format notes](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
 - **In-browser SGP4.** Positions are computed locally from orbital elements, so
   the "real-time" motion costs no API quota. Time can be paused, rewound to now,
   and warped up to 1500×.
@@ -49,16 +55,16 @@ python3 -m http.server 8080
 npx serve .
 ```
 
-Then open the printed URL. The first load fetches TLE data from CelesTrak
+Then open the printed URL. The first load fetches GP data from CelesTrak
 (a few seconds); subsequent loads use the 2-hour cache.
 
 ## How it works
 
 ```
-CelesTrak TLE  ──fetch (≤ once / 2h)──►  localStorage cache
+CelesTrak OMM (JSON)  ──fetch (≤ once / 2h)──►  localStorage cache (compact)
      │
      ▼
- parse + validate (satellite.js)  ──►  Web Worker (holds SGP4 satrecs)
+ parse + validate (satellite.js json2satrec)  ──►  Web Worker (holds SGP4 satrecs)
      │                                        │
      │   each animation frame: sim time ──────┘
      │                                        │
@@ -66,8 +72,8 @@ CelesTrak TLE  ──fetch (≤ once / 2h)──►  localStorage cache
  Three.js point cloud  ◄──── ECI→ECEF→scene positions (Float32Array, transferable)
 ```
 
-- **`src/tle.js`** — fetches CelesTrak groups, parses TLEs, dedupes by NORAD id,
-  handles caching and stale-cache fallback.
+- **`src/gp.js`** — fetches CelesTrak groups as OMM JSON, normalises records,
+  dedupes by NORAD id, and handles compact caching with stale-cache fallback.
 - **`src/worker.js`** — builds SGP4 records and propagates every satellite to a
   requested time, returning Earth-fixed scene positions as a transferable buffer.
 - **`src/satellites.js`** — the point-cloud layer, layer visibility, click

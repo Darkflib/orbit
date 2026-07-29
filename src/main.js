@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
 // Orbit — application entry point.
-// Wires together the 3D scene, the satellite field, TLE loading, the simulation
+// Wires together the 3D scene, the satellite field, GP/OMM loading, the simulation
 // clock, and the UI.
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { SatelliteField } from './satellites.js';
-import { fetchLayers } from './tle.js';
+import { fetchLayers } from './gp.js';
 import { LAYERS, LAYER_BY_ID, SPEEDS, EARTH_RADIUS } from './constants.js';
 import { sunDirectionScene, fmtClock, fmtDuration } from './utils.js';
 
@@ -38,7 +38,7 @@ const raycaster = new THREE.Raycaster();
 
 let activeLayers = LAYERS.filter((l) => l.default);
 let followSelected = false;
-let tleFetchedAt = 0;
+let gpFetchedAt = 0;
 let frames = 0;
 let fpsAnchor = performance.now();
 
@@ -57,14 +57,14 @@ async function loadData(layers, opts = {}) {
     if (records.length === 0) {
       throw new Error(errors[0] || 'No satellites returned.');
     }
-    tleFetchedAt = fetchedAt;
+    gpFetchedAt = fetchedAt;
     showLoading(`Initialising SGP4 for ${records.length.toLocaleString()} satellites…`);
     const n = field.load(records);
     updateStats(n);
     updateLayerCounts();
     buildSearchList();
     if (stale) {
-      toast('Using cached TLE data (CelesTrak unreachable — showing last known elements).');
+      toast('Using cached GP data (CelesTrak unreachable — showing last known elements).');
     } else if (errors.length) {
       toast(`Some layers failed to load: ${errors.slice(0, 2).join('; ')}`);
     }
@@ -72,7 +72,7 @@ async function loadData(layers, opts = {}) {
   } catch (err) {
     hideLoading();
     toast(
-      `Could not load TLE data: ${err.message}. CelesTrak may be unreachable, or the ` +
+      `Could not load GP data: ${err.message}. CelesTrak may be unreachable, or the ` +
       `page is opened from file:// (serve it over http and retry).`,
       true,
     );
@@ -273,8 +273,8 @@ function updateLayerCounts() {
 }
 
 function updateCacheAge() {
-  if (!tleFetchedAt) return;
-  $('stat-source').textContent = `TLE ${fmtDuration(Date.now() - tleFetchedAt)}`;
+  if (!gpFetchedAt) return;
+  $('stat-source').textContent = `GP ${fmtDuration(Date.now() - gpFetchedAt)}`;
 }
 
 // ---- Loading / toast ------------------------------------------------------
