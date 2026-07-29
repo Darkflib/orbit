@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Orbit — Real-time 3D Satellite Tracker</title>
+  <meta name="description" content="Real-time 3D visualization of satellite trajectories using CelesTrak TLE data and satellite.js SGP4 propagation." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='30' fill='%230b1220'/%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%2338bdf8' stroke-width='4'/%3E%3Cellipse cx='50' cy='50' rx='46' ry='18' fill='none' stroke='%2338bdf8' stroke-width='3' transform='rotate(-30 50 50)'/%3E%3Ccircle cx='87' cy='34' r='6' fill='%23facc15'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://celestrak.org" />
+  <link rel="stylesheet" href="./styles/main.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "satellite.js": "https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/+esm"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- Loading overlay -->
+  <div id="loading" class="overlay">
+    <div class="loader-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <h1>Orbit</h1>
+      <p id="loading-status">Fetching orbital elements from CelesTrak…</p>
+    </div>
+  </div>
+
+  <!-- Top brand / stats bar -->
+  <header id="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <strong>ORBIT</strong>
+      <span class="subtle">real-time satellite tracker</span>
+    </div>
+    <div class="stats">
+      <span id="stat-sats" class="pill">0 satellites</span>
+      <span id="stat-fps" class="pill">– fps</span>
+      <span id="stat-source" class="pill" title="Time since TLE data was fetched">cache: –</span>
+    </div>
+  </header>
+
+  <!-- Left control panel: layers + search -->
+  <aside id="panel-left" class="panel">
+    <div class="panel-header">
+      <h2>Layers</h2>
+      <button id="toggle-left" class="collapse-btn" title="Collapse">–</button>
+    </div>
+    <div class="panel-body" id="layers"></div>
+
+    <div class="panel-section">
+      <button id="load-all" class="wide-btn">Load all active (~12k)</button>
+      <button id="refresh-tle" class="wide-btn ghost">Refresh TLE data</button>
+    </div>
+
+    <div class="panel-section">
+      <label class="field-label" for="search">Find a satellite</label>
+      <input id="search" list="sat-list" placeholder="e.g. ISS (ZARYA)" autocomplete="off" />
+      <datalist id="sat-list"></datalist>
+    </div>
+  </aside>
+
+  <!-- Right info panel: selected satellite -->
+  <aside id="panel-right" class="panel hidden">
+    <div class="panel-header">
+      <h2 id="sel-name">—</h2>
+      <button id="sel-close" class="collapse-btn" title="Deselect">×</button>
+    </div>
+    <div class="panel-body">
+      <dl class="readout">
+        <div><dt>Latitude</dt><dd id="sel-lat">—</dd></div>
+        <div><dt>Longitude</dt><dd id="sel-lon">—</dd></div>
+        <div><dt>Altitude</dt><dd id="sel-alt">—</dd></div>
+        <div><dt>Velocity</dt><dd id="sel-vel">—</dd></div>
+        <div><dt>Period</dt><dd id="sel-period">—</dd></div>
+        <div><dt>Inclination</dt><dd id="sel-inc">—</dd></div>
+        <div><dt>NORAD ID</dt><dd id="sel-norad">—</dd></div>
+        <div><dt>Group</dt><dd id="sel-group">—</dd></div>
+      </dl>
+      <div class="checks">
+        <label><input type="checkbox" id="opt-orbit" checked /> Orbit path</label>
+        <label><input type="checkbox" id="opt-track" checked /> Ground track</label>
+        <label><input type="checkbox" id="opt-footprint" checked /> Footprint</label>
+        <label><input type="checkbox" id="opt-follow" /> Follow camera</label>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Bottom time controls -->
+  <footer id="timebar">
+    <button id="btn-play" class="tbtn" title="Play / pause">❚❚</button>
+    <button id="btn-now" class="tbtn" title="Jump to current time">NOW</button>
+    <div class="speed">
+      <span class="field-label">Speed</span>
+      <div class="speed-btns" id="speed-btns"></div>
+    </div>
+    <div class="clock">
+      <span id="clock-utc">—</span>
+      <span id="clock-mult" class="subtle">1×</span>
+    </div>
+  </footer>
+
+  <div id="error-toast" class="toast hidden"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
