@@ -1,5 +1,10 @@
 # Orbit — Real-time 3D Satellite Tracker
 
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![No backend](https://img.shields.io/badge/backend-none-success.svg)
+![No build step](https://img.shields.io/badge/build-none-success.svg)
+![Data: CelesTrak](https://img.shields.io/badge/data-CelesTrak-38bdf8.svg)
+
 A frontend-only, real-time 3D visualization of the world's active satellites.
 It fetches [CelesTrak](https://celestrak.org/) TLE orbital elements once, then
 uses [satellite.js](https://github.com/shashwatak/satellite-js) (an SGP4
@@ -92,6 +97,13 @@ their satellites.
 Visual references: [Track The Sky](https://trackthesky.com/) and
 [satellitemap.space](https://satellitemap.space/).
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set
+up and submit changes, and please follow our
+[Code of Conduct](CODE_OF_CONDUCT.md). Found a security issue? See
+[SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT
+Released under the [MIT License](LICENSE).
