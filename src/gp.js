@@ -11,7 +11,10 @@
 // Between fetches, satellite.js propagates positions locally, so the
 // "real-time" motion costs no network traffic.
 // ---------------------------------------------------------------------------
-import { CELESTRAK_URL, GP_CACHE_PREFIX, GP_MAX_AGE_MS } from './constants.js';
+import {
+  CELESTRAK_URL, CELESTRAK_SPECIAL_URL, GP_CACHE_PREFIX, GP_MAX_AGE_MS,
+  REENTRY_LAYER, REENTRY_MAX_AGE_MS,
+} from './constants.js';
 
 // The OMM fields we keep. This is exactly what `json2satrec` needs plus the
 // name and international designator for display. Verified sufficient: a satrec
@@ -78,23 +81,24 @@ function writeCache(group, records) {
   }
 }
 
-// Fetch one CelesTrak group, using the cache when it is still fresh.
-// Returns { records, fetchedAt, fromCache }.
-export async function fetchGroup(group, { force = false } = {}) {
-  const cached = readCache(group);
-  const fresh = cached && Date.now() - cached.fetchedAt < GP_MAX_AGE_MS;
+// Shared fetch-and-cache core. `cacheName` keys the localStorage entry, `url`
+// is the CelesTrak endpoint and `maxAge` how long a cache entry stays fresh.
+// Returns { records, fetchedAt, fromCache, stale? }.
+async function fetchElements(cacheName, url, maxAge, force) {
+  const cached = readCache(cacheName);
+  const fresh = cached && Date.now() - cached.fetchedAt < maxAge;
 
   if (cached && fresh && !force) {
     return { records: cached.records, fetchedAt: cached.fetchedAt, fromCache: true };
   }
 
   try {
-    const res = await fetch(CELESTRAK_URL(group), { mode: 'cors' });
+    const res = await fetch(url, { mode: 'cors' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) throw new Error('no elements returned');
     const records = data.map(ommToRecord);
-    writeCache(group, records);
+    writeCache(cacheName, records);
     return { records, fetchedAt: Date.now(), fromCache: false };
   } catch (err) {
     // Network/CORS/parse failure — fall back to a stale cache if we have one.
@@ -103,6 +107,25 @@ export async function fetchGroup(group, { force = false } = {}) {
     }
     throw err;
   }
+}
+
+// Fetch one CelesTrak group, using the cache when it is still fresh.
+// Returns { records, fetchedAt, fromCache }.
+export async function fetchGroup(group, { force = false } = {}) {
+  return fetchElements(group, CELESTRAK_URL(group), GP_MAX_AGE_MS, force);
+}
+
+// Fetch CelesTrak's decaying-objects watch list (SPECIAL=DECAYING). Records are
+// tagged with the reentry layer so the shared satellite field colours them as
+// reentry candidates. Uses a separate, shorter-lived cache than group data.
+export async function fetchDecaying({ force = false } = {}) {
+  const r = await fetchElements(
+    'special.decaying',
+    CELESTRAK_SPECIAL_URL(REENTRY_LAYER.special),
+    REENTRY_MAX_AGE_MS,
+    force,
+  );
+  return { ...r, records: r.records.map((rec) => ({ ...rec, layerId: REENTRY_LAYER.id })) };
 }
 
 // Fetch every group referenced by the given layers, in parallel, and return a

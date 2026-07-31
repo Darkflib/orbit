@@ -39,6 +39,15 @@ coverage footprint.
 - **Interaction.** Click or search to select a satellite; toggle its orbit path,
   ground track, and footprint; let the camera follow it. Toggle layers
   (Starlink, GNSS, OneWeb, GEO, stations) or load all ~12,000 active satellites.
+- **Reentry mode.** A separate view built on CelesTrak's decaying-object watch
+  list (`SPECIAL=DECAYING`). Because those records carry only orbital elements,
+  Orbit derives the *when* and *where* in the browser: it propagates each object
+  with SGP4 until it drops below a reentry altitude and marks the sub-satellite
+  point as the estimated impact location, plotting a red target on the globe for
+  every prediction. A side panel lists the objects sorted by estimated
+  time-to-reentry, and selecting one shows its predicted reentry time,
+  countdown, and coordinates. These are SGP4 estimates — indicative of the
+  trend, not authoritative reentry forecasts.
 
 ## Running it
 
@@ -72,8 +81,12 @@ CelesTrak OMM (JSON)  ──fetch (≤ once / 2h)──►  localStorage cache (
  Three.js point cloud  ◄──── ECI→ECEF→scene positions (Float32Array, transferable)
 ```
 
-- **`src/gp.js`** — fetches CelesTrak groups as OMM JSON, normalises records,
-  dedupes by NORAD id, and handles compact caching with stale-cache fallback.
+- **`src/gp.js`** — fetches CelesTrak groups (and the `SPECIAL=DECAYING` set) as
+  OMM JSON, normalises records, dedupes by NORAD id, and handles compact caching
+  with stale-cache fallback.
+- **`src/reentry.js`** — the reentry mode: SGP4 forward-propagation to an
+  estimated decay epoch and sub-satellite impact point, plus the estimated-location
+  markers drawn on the globe.
 - **`src/worker.js`** — builds SGP4 records and propagates every satellite to a
   requested time, returning Earth-fixed scene positions as a transferable buffer.
 - **`src/satellites.js`** — the point-cloud layer, layer visibility, click

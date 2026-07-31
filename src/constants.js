@@ -15,6 +15,10 @@ export const RAD2DEG = 180 / Math.PI;
 export const GP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const GP_CACHE_PREFIX = 'orbit.gp.';
 
+// The decaying set changes far faster than the general catalog (perigee drops
+// by tens of km per day near reentry), so it is refetched more aggressively.
+export const REENTRY_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+
 // CelesTrak general-perturbations endpoint. CORS-enabled, no key required.
 // We request OMM in JSON: the legacy TLE format cannot represent the 6-digit
 // catalog numbers CelesTrak began issuing in 2026 (5-digit space exhausted),
@@ -22,6 +26,12 @@ export const GP_CACHE_PREFIX = 'orbit.gp.';
 // https://celestrak.org/NORAD/documentation/gp-data-formats.php
 export const CELESTRAK_URL = (group) =>
   `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=JSON`;
+
+// The same endpoint also serves curated "special" data sets keyed by SPECIAL=.
+// SPECIAL=DECAYING is CelesTrak's watch list of objects whose orbits are
+// decaying toward atmospheric reentry — the source for the reentry mode.
+export const CELESTRAK_SPECIAL_URL = (special) =>
+  `https://celestrak.org/NORAD/elements/gp.php?SPECIAL=${special}&FORMAT=JSON`;
 
 // Satellite layers. Each pulls one or more CelesTrak GROUPs and is drawn with
 // its own colour. `priority` resolves duplicates (lower wins) when a catalog
@@ -82,7 +92,32 @@ export const LAYERS = [
   },
 ];
 
-export const LAYER_BY_ID = Object.fromEntries(LAYERS.map((l) => [l.id, l]));
+// The reentry watch layer is not part of the normal layer list (it has no
+// toggle in the tracker) — it is loaded on its own when the user switches to
+// reentry mode. It is still registered in LAYER_BY_ID so the shared satellite
+// field can colour its points.
+export const REENTRY_LAYER = {
+  id: 'reentry',
+  label: 'Reentry watch',
+  color: '#ff4d4d',
+  special: 'DECAYING',
+  priority: 0,
+};
+
+export const LAYER_BY_ID = Object.fromEntries(
+  [...LAYERS, REENTRY_LAYER].map((l) => [l.id, l]),
+);
+
+// ---- Reentry estimation ---------------------------------------------------
+// Geocentric altitude (km) at or below which an object is treated as having
+// reentered. Real reentry heating peaks around 80 km; we stop a little higher
+// because SGP4 is not valid deep in the atmosphere and the sub-satellite point
+// barely moves over the last few km anyway.
+export const REENTRY_ALT_KM = 100;
+// How far ahead SGP4 is propagated when searching for the decay epoch. Objects
+// still above the atmosphere after this horizon are reported as "beyond" —
+// their decay is too far out for a meaningful point estimate.
+export const REENTRY_HORIZON_DAYS = 30;
 
 // Time-warp multipliers offered in the UI.
 export const SPEEDS = [1, 10, 60, 300, 1500];

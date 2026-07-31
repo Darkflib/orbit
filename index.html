@@ -37,6 +37,10 @@
       <strong>ORBIT</strong>
       <span class="subtle">real-time satellite tracker</span>
     </div>
+    <div class="modeswitch" role="tablist" aria-label="View mode">
+      <button id="mode-tracker" class="active" role="tab" aria-selected="true">Tracker</button>
+      <button id="mode-reentry" role="tab" aria-selected="false">Reentry</button>
+    </div>
     <div class="stats">
       <span id="stat-sats" class="pill">0 satellites</span>
       <span id="stat-fps" class="pill">– fps</span>
@@ -47,14 +51,33 @@
   <!-- Left control panel: layers + search -->
   <aside id="panel-left" class="panel">
     <div class="panel-header">
-      <h2>Layers</h2>
+      <h2 id="panel-left-title">Layers</h2>
       <button id="toggle-left" class="collapse-btn" title="Collapse">–</button>
     </div>
-    <div class="panel-body" id="layers"></div>
 
-    <div class="panel-section">
+    <!-- Tracker mode: satellite layers -->
+    <div class="panel-body" id="layers"></div>
+    <div class="panel-section" id="tracker-actions">
       <button id="load-all" class="wide-btn">Load all active (~12k)</button>
       <button id="refresh-tle" class="wide-btn ghost">Refresh TLE data</button>
+    </div>
+
+    <!-- Reentry mode: decaying-object watch list -->
+    <div class="panel-section" id="reentry-section">
+      <p class="reentry-note">
+        Objects CelesTrak flags as decaying toward reentry. Times and locations
+        are <strong>SGP4 estimates</strong> — indicative, not authoritative.
+      </p>
+      <button id="reentry-refresh" class="wide-btn ghost">Refresh decay data</button>
+      <div class="reentry-legend">
+        <span><span class="dot-red"></span> decaying object</span>
+        <span><span class="ring-red"></span> estimated reentry</span>
+      </div>
+      <div class="reentry-list-head">
+        <span id="reentry-count">—</span>
+        <span class="subtle">sorted by ETA</span>
+      </div>
+      <ul id="reentry-list" class="reentry-list"></ul>
     </div>
 
     <div class="panel-section">
@@ -81,6 +104,18 @@
         <div><dt>NORAD ID</dt><dd id="sel-norad">—</dd></div>
         <div><dt>Group</dt><dd id="sel-group">—</dd></div>
       </dl>
+
+      <!-- Reentry estimate (shown only for decaying objects in reentry mode) -->
+      <div id="reentry-info" class="reentry-info hidden">
+        <div class="reentry-status" id="re-status">—</div>
+        <dl class="readout">
+          <div><dt>Est. reentry (UTC)</dt><dd id="re-when">—</dd></div>
+          <div><dt>Countdown</dt><dd id="re-eta">—</dd></div>
+          <div><dt>Est. location</dt><dd id="re-loc">—</dd></div>
+          <div><dt>Altitude now</dt><dd id="re-alt">—</dd></div>
+        </dl>
+      </div>
+
       <div class="checks">
         <label><input type="checkbox" id="opt-orbit" checked /> Orbit path</label>
         <label><input type="checkbox" id="opt-track" checked /> Ground track</label>

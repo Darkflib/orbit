@@ -6,9 +6,12 @@
 import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { SatelliteField } from './satellites.js';
-import { fetchLayers } from './gp.js';
+import { fetchLayers, fetchDecaying } from './gp.js';
 import { LAYERS, LAYER_BY_ID, SPEEDS, EARTH_RADIUS } from './constants.js';
 import { sunDirectionScene, fmtClock, fmtDuration } from './utils.js';
+import {
+  estimateReentry, reentryStatusLabel, fmtReentryEta, fmtReentryLoc, ReentryMarkers,
+} from './reentry.js';
 
 // ---- DOM handles ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -34,6 +37,7 @@ const clock = {
 // ---- Boot -----------------------------------------------------------------
 const { renderer, scene, camera, controls, setSunDirection } = createScene(canvas);
 const field = new SatelliteField(scene);
+const reentryMarkers = new ReentryMarkers(scene);
 const raycaster = new THREE.Raycaster();
 
 let activeLayers = LAYERS.filter((l) => l.default);
@@ -42,11 +46,18 @@ let gpFetchedAt = 0;
 let frames = 0;
 let fpsAnchor = performance.now();
 
+// ---- View mode ------------------------------------------------------------
+// 'tracker' — the full satellite catalogue (default).
+// 'reentry' — CelesTrak's decaying-object watch list, with SGP4-estimated
+//             reentry times and locations.
+let mode = 'tracker';
+let reentryEstimates = [];        // per field-index estimate (reentry mode only)
+
 buildLayerToggles();
 buildSpeedButtons();
 wireControls();
 animate();
-loadData(activeLayers);
+setMode('tracker'); // loads the default catalogue
 
 // ---- Data loading ---------------------------------------------------------
 async function loadData(layers, opts = {}) {
@@ -80,6 +91,149 @@ async function loadData(layers, opts = {}) {
   }
 }
 
+// ---- View mode -------------------------------------------------------------
+function setMode(next) {
+  mode = next;
+  const reentry = next === 'reentry';
+  document.body.classList.toggle('mode-reentry', reentry);
+  document.body.classList.toggle('mode-tracker', !reentry);
+  $('mode-tracker').classList.toggle('active', !reentry);
+  $('mode-reentry').classList.toggle('active', reentry);
+  $('mode-tracker').setAttribute('aria-selected', String(!reentry));
+  $('mode-reentry').setAttribute('aria-selected', String(reentry));
+  $('panel-left-title').textContent = reentry ? 'Reentry watch' : 'Layers';
+
+  deselect();
+  reentryMarkers.setActive(reentry);
+  if (reentry) {
+    loadReentry();
+  } else {
+    reentryEstimates = [];
+    loadData(activeLayers);
+  }
+}
+
+// Load the decaying-object watch list and derive reentry estimates for it.
+async function loadReentry(opts = {}) {
+  showLoading('Fetching decaying objects from CelesTrak…');
+  try {
+    const { records, fetchedAt, stale } = await fetchDecaying(opts);
+    if (!records.length) throw new Error('No decaying objects returned.');
+    gpFetchedAt = fetchedAt;
+    showLoading(`Estimating reentry for ${records.length} objects…`);
+    // Let the status text paint before the synchronous SGP4 decay sweep.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const n = field.load(records);
+    computeReentryEstimates();
+    buildReentryList();
+    updateStats(n);
+    buildSearchList();
+    if (stale) {
+      toast('Using cached decay data (CelesTrak unreachable — showing last known elements).');
+    }
+    hideLoading();
+  } catch (err) {
+    hideLoading();
+    toast(`Could not load decay data: ${err.message}. CelesTrak may be unreachable.`, true);
+    console.error(err);
+  }
+}
+
+// Forward-propagate every loaded object to its estimated reentry, aligned with
+// the field's (validated) records, and hand the impact points to the markers.
+function computeReentryEstimates() {
+  const fromMs = Date.now();
+  reentryEstimates = field.satrecs.map((sr) => estimateReentry(sr, fromMs));
+  reentryMarkers.setData(reentryEstimates);
+  reentryMarkers.setActive(mode === 'reentry');
+}
+
+// Reentry-status ordering for the list: soonest / most urgent first.
+const REENTRY_ORDER = { imminent: 0, predicted: 1, beyond: 2, decayed: 3 };
+
+function buildReentryList() {
+  const list = $('reentry-list');
+  list.innerHTML = '';
+  const rows = reentryEstimates
+    .map((est, i) => ({ est, i, rec: field.records[i] }))
+    .sort((a, b) => {
+      const d = (REENTRY_ORDER[a.est.status] ?? 9) - (REENTRY_ORDER[b.est.status] ?? 9);
+      if (d !== 0) return d;
+      return (a.est.reentryMs ?? Infinity) - (b.est.reentryMs ?? Infinity);
+    });
+
+  $('reentry-count').textContent = `${rows.length} object${rows.length === 1 ? '' : 's'}`;
+  if (!rows.length) {
+    list.innerHTML = '<li class="reentry-empty">No decaying objects right now.</li>';
+    return;
+  }
+
+  const now = Date.now();
+  const frag = document.createDocumentFragment();
+  for (const { est, i, rec } of rows) {
+    const li = document.createElement('li');
+    li.className = est.status;
+    li.dataset.index = String(i);
+    const eta = est.reentryMs != null
+      ? fmtReentryEta(est.reentryMs - now)
+      : reentryStatusLabel(est.status);
+    li.innerHTML =
+      `<span class="re-name">${escapeHtml(rec.name)}</span>` +
+      `<span class="re-eta">${eta}</span>`;
+    li.addEventListener('click', () => selectIndex(i, true));
+    frag.appendChild(li);
+  }
+  list.appendChild(frag);
+  markSelectedRow();
+}
+
+// Refresh list countdowns against sim time (keeps them live under time-warp).
+function refreshReentryEtas() {
+  const t = clock.simTime;
+  $('reentry-list').querySelectorAll('li[data-index]').forEach((li) => {
+    const est = reentryEstimates[Number(li.dataset.index)];
+    const eta = li.querySelector('.re-eta');
+    if (!est || !eta) return;
+    eta.textContent = est.reentryMs != null
+      ? fmtReentryEta(est.reentryMs - t)
+      : reentryStatusLabel(est.status);
+  });
+}
+
+function markSelectedRow() {
+  const sel = field.selected;
+  $('reentry-list').querySelectorAll('li[data-index]').forEach((li) => {
+    li.classList.toggle('selected', Number(li.dataset.index) === sel);
+  });
+}
+
+// Fill (or hide) the reentry estimate block in the selection panel.
+function updateReentryInfo(idx) {
+  const info = $('reentry-info');
+  const est = mode === 'reentry' ? reentryEstimates[idx] : null;
+  if (!est) { info.classList.add('hidden'); return; }
+  info.classList.remove('hidden');
+  $('re-status').textContent = reentryStatusLabel(est.status);
+  $('re-when').textContent = est.reentryMs != null ? fmtClock(new Date(est.reentryMs)) : '—';
+  $('re-loc').textContent = fmtReentryLoc(est.lat, est.lon);
+  $('re-alt').textContent = est.altKm != null ? `${est.altKm.toFixed(0)} km` : '—';
+  updateReentryCountdown();
+}
+
+function updateReentryCountdown() {
+  if (mode !== 'reentry' || field.selected < 0) return;
+  const est = reentryEstimates[field.selected];
+  if (!est) return;
+  $('re-eta').textContent = est.reentryMs != null
+    ? fmtReentryEta(est.reentryMs - clock.simTime)
+    : reentryStatusLabel(est.status);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 // ---- Render loop ----------------------------------------------------------
 function animate() {
   requestAnimationFrame(animate);
@@ -92,6 +246,7 @@ function animate() {
   // Selected-satellite readout + overlays.
   const sel = field.updateSelection(date);
   if (sel) updateReadout(sel);
+  if (mode === 'reentry') updateReentryCountdown();
   if (followSelected && sel) {
     controls.target.lerp(sel.scenePosition, 0.08);
   } else {
@@ -111,6 +266,7 @@ function animate() {
     frames = 0;
     fpsAnchor = nowp;
     updateCacheAge();
+    if (mode === 'reentry') refreshReentryEtas();
   }
 }
 
@@ -225,6 +381,11 @@ function wireControls() {
   });
   $('refresh-tle').addEventListener('click', () => loadData(activeLayers, { force: true }));
 
+  // Mode switch (tracker catalogue ↔ reentry watch list).
+  $('mode-tracker').addEventListener('click', () => { if (mode !== 'tracker') setMode('tracker'); });
+  $('mode-reentry').addEventListener('click', () => { if (mode !== 'reentry') setMode('reentry'); });
+  $('reentry-refresh').addEventListener('click', () => loadReentry({ force: true }));
+
   // Collapse left panel.
   $('toggle-left').addEventListener('click', () => {
     $('panel-left').classList.toggle('collapsed');
@@ -236,6 +397,11 @@ function selectIndex(idx, recenter = false) {
   if (!rec) return;
   $('panel-right').classList.remove('hidden');
   $('sel-name').textContent = rec.name;
+  updateReentryInfo(idx);
+  if (mode === 'reentry') {
+    reentryMarkers.highlight(idx);
+    markSelectedRow();
+  }
   if (recenter) {
     const pos = field.getScenePosition(idx);
     const dir = pos.clone().normalize();
@@ -247,6 +413,9 @@ function selectIndex(idx, recenter = false) {
 function deselect() {
   field.deselect();
   $('panel-right').classList.add('hidden');
+  $('reentry-info').classList.add('hidden');
+  reentryMarkers.highlight(-1);
+  markSelectedRow();
 }
 
 function updateReadout(sel) {
