@@ -66,7 +66,8 @@
     <div class="panel-section" id="reentry-section">
       <p class="reentry-note">
         Objects CelesTrak flags as decaying toward reentry. Times and locations
-        are <strong>SGP4 estimates</strong> — indicative, not authoritative.
+        are <strong>SGP4 estimates</strong> — indicative, not authoritative, and
+        less reliable the further ahead they reach.
       </p>
       <button id="reentry-refresh" class="wide-btn ghost">Refresh decay data</button>
       <div class="reentry-legend">
@@ -112,8 +113,29 @@
           <div><dt>Est. reentry (UTC)</dt><dd id="re-when">—</dd></div>
           <div><dt>Countdown</dt><dd id="re-eta">—</dd></div>
           <div><dt>Est. location</dt><dd id="re-loc">—</dd></div>
+          <div><dt>Uncertainty</dt><dd id="re-window">—</dd></div>
           <div><dt>Altitude now</dt><dd id="re-alt">—</dd></div>
         </dl>
+        <button id="re-jump" class="wide-btn ghost">Jump to est. reentry</button>
+        <p id="re-past" class="re-past hidden">
+          Simulated time is past the estimated reentry — this object has most
+          likely already decayed. The marker and track show only where its
+          now-stale elements place it.
+        </p>
+        <p class="re-hint">
+          The shaded corridor is the estimated along-track spread; it widens with
+          lead time, so predictions further ahead are less reliable.
+        </p>
+      </div>
+
+      <!-- External references for the selected object (opens in a new tab) -->
+      <div class="sel-links">
+        <span class="field-label">More info</span>
+        <div class="links-row">
+          <a id="link-n2yo" target="_blank" rel="noopener noreferrer">N2YO</a>
+          <a id="link-celestrak" target="_blank" rel="noopener noreferrer">CelesTrak</a>
+          <a id="link-heavens" target="_blank" rel="noopener noreferrer">Heavens-Above</a>
+        </div>
       </div>
 
       <div class="checks">
@@ -129,6 +151,10 @@
   <footer id="timebar">
     <button id="btn-play" class="tbtn" title="Play / pause">❚❚</button>
     <button id="btn-now" class="tbtn" title="Jump to current time">NOW</button>
+    <div class="skip">
+      <span class="field-label">Skip</span>
+      <div class="skip-btns" id="skip-btns"></div>
+    </div>
     <div class="speed">
       <span class="field-label">Speed</span>
       <div class="speed-btns" id="speed-btns"></div>

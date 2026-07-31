@@ -16,6 +16,8 @@ import * as THREE from 'three';
 import * as satellite from 'satellite.js';
 import {
   EARTH_RADIUS, EARTH_RADIUS_KM, REENTRY_ALT_KM, REENTRY_HORIZON_DAYS, RAD2DEG,
+  REENTRY_UNCERT_INNER, REENTRY_UNCERT_OUTER, REENTRY_CORRIDOR_MIN_MS,
+  REENTRY_CORRIDOR_INNER_KM, REENTRY_CORRIDOR_OUTER_KM,
 } from './constants.js';
 import { latLonToScene } from './utils.js';
 
@@ -102,9 +104,12 @@ export function reentryStatusLabel(status) {
 }
 
 // Time-to-reentry as a compact countdown (e.g. "3d 4h", "5h 20m", "12 min").
+// Once the predicted instant has passed we say 'imminent' for the first hour
+// (still plausibly coming down) and 'past' beyond that — the object is no
+// longer where the frozen elements place it.
 export function fmtReentryEta(msToGo) {
   if (msToGo == null) return '—';
-  if (msToGo <= 0) return 'imminent';
+  if (msToGo <= 0) return msToGo > -3600000 ? 'imminent' : 'past';
   const mins = Math.floor(msToGo / 60000);
   const d = Math.floor(mins / 1440);
   const h = Math.floor((mins % 1440) / 60);
@@ -120,6 +125,25 @@ export function fmtReentryLoc(lat, lon) {
   const ns = `${Math.abs(lat).toFixed(1)}° ${lat >= 0 ? 'N' : 'S'}`;
   const ew = `${Math.abs(lon).toFixed(1)}° ${lon >= 0 ? 'E' : 'W'}`;
   return `${ns}, ${ew}`;
+}
+
+// Along-track timing half-windows (ms) for the inner/outer corridors, from the
+// lead time (ms) until predicted reentry. Clamped so an imminent object still
+// gets a visible band.
+export function reentryUncertaintyMs(leadMs) {
+  const lead = Math.max(leadMs, 0);
+  return {
+    innerMs: Math.max(lead * REENTRY_UNCERT_INNER, REENTRY_CORRIDOR_MIN_MS),
+    outerMs: Math.max(lead * REENTRY_UNCERT_OUTER, REENTRY_CORRIDOR_MIN_MS * 2),
+  };
+}
+
+// Compact "±3.2 h" / "±18 min" label for the outer uncertainty window, used to
+// convey that further-out predictions carry a wider spread.
+export function fmtUncertaintyWindow(leadMs) {
+  if (leadMs == null) return '—';
+  const mins = reentryUncertaintyMs(leadMs).outerMs / 60000;
+  return mins >= 90 ? `±${(mins / 60).toFixed(1)} h` : `±${Math.round(mins)} min`;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,9 +178,15 @@ export class ReentryMarkers {
         color: 0xffd1d1,
         transparent: true,
         depthWrite: false,
+        // This billboard sits on the surface; with depth testing, the globe's
+        // bulge culls its far half at grazing angles (dashes go missing). It's a
+        // marker for the *selected* impact, so draw it whole and on top instead.
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
       }),
     );
     this.reticle.scale.setScalar(EARTH_RADIUS * 0.16);
+    this.reticle.renderOrder = 5; // above the shaded lozenges (renderOrder 2–3)
     this.reticle.visible = false;
 
     this.scene.add(this.points, this.reticle);
@@ -194,6 +224,145 @@ export class ReentryMarkers {
       this.reticle.visible = false;
     }
   }
+
+  // Grey the reticle once the object is past its predicted reentry.
+  setPast(isPast) {
+    this.reticle.material.color.set(isPast ? 0x9aa0a6 : 0xffd1d1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shaded impact footprint for the selected object. Reentry error is dominated by
+// *when* the object comes down, which maps to a spread *along its ground track*
+// — so the footprint is elongated in the direction of travel, not a circle. We
+// draw two nested uncertainty lozenges centred on the nominal point and oriented
+// along the local heading.
+//
+// This is a feel-of-it depiction, not the literal spread: a days-out window
+// covers several orbits and would read as noise, so the along-track axis is
+// capped to a legible size and the numeric "±Xh" carries the true magnitude.
+//
+// Each lozenge is tessellated into concentric rings so every triangle hugs the
+// globe. A single big triangle-fan tents as a flat facet over the curved
+// surface; where that facet dips below the sphere it is depth-culled, leaving
+// the "bow-tie" wedges. Ring tessellation keeps the whole fill on the surface.
+// ---------------------------------------------------------------------------
+const FOOTPRINT_RADIUS = EARTH_RADIUS * 1.0035; // hair above the surface/dots
+const ELLIPSE_SEGMENTS = 48;   // angular divisions
+const ELLIPSE_RINGS = 5;       // radial divisions (surface-hugging tessellation)
+const MAX_ALONG_OUTER = 0.36;  // ~21° cap: legible lozenge, not a globe-wrapping smear
+const MAX_ALONG_INNER = 0.20;  // ~11°
+const MIN_ALONG = 0.06;        // keep even an imminent object visibly elongated
+
+export class ReentryCorridor {
+  constructor(scene) {
+    this.scene = scene;
+    this.outer = makeBand(0xff5a5a, 0.18, 2);
+    this.inner = makeBand(0xff9a6a, 0.34, 3);
+    this.scene.add(this.outer, this.inner);
+    this.hide();
+  }
+
+  hide() {
+    this.outer.visible = false;
+    this.inner.visible = false;
+  }
+
+  // Rebuild the footprint for a satrec whose reentry is predicted at reentryMs,
+  // with nowMs giving the current lead time. Hides lozenges it cannot place.
+  show(satrec, reentryMs, nowMs) {
+    if (reentryMs == null) { this.hide(); return; }
+    const center = subPoint(satrec, new Date(reentryMs));
+    const ahead = subPoint(satrec, new Date(reentryMs + 60000));
+    if (!center || !ahead) { this.hide(); return; }
+
+    // Orbital angular rate (rad/ms) turns a timing window into an along-track arc.
+    const periodMin = (2 * Math.PI) / satrec.no;
+    const ratePerMs = periodMin > 0 ? (2 * Math.PI) / (periodMin * 60000) : 0;
+    const { innerMs, outerMs } = reentryUncertaintyMs(reentryMs - nowMs);
+    const alongOuter = clampAlong(outerMs * ratePerMs, MAX_ALONG_OUTER);
+    const alongInner = clampAlong(innerMs * ratePerMs, MAX_ALONG_INNER);
+    const crossOuter = REENTRY_CORRIDOR_OUTER_KM / EARTH_RADIUS_KM;
+    const crossInner = REENTRY_CORRIDOR_INNER_KM / EARTH_RADIUS_KM;
+
+    this.outer.visible = buildEllipse(this.outer, center, ahead, alongOuter, crossOuter);
+    this.inner.visible = buildEllipse(this.inner, center, ahead, alongInner, crossInner);
+  }
+}
+
+function clampAlong(arc, max) {
+  return Math.min(Math.max(arc, MIN_ALONG), max);
+}
+
+function makeBand(color, opacity, renderOrder) {
+  const mesh = new THREE.Mesh(
+    new THREE.BufferGeometry(),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      side: THREE.DoubleSide,
+      depthWrite: false, // translucent; occluded by the globe but not by itself
+    }),
+  );
+  mesh.frustumCulled = false;
+  mesh.renderOrder = renderOrder;
+  return mesh;
+}
+
+// A filled uncertainty lozenge on the globe, elongated along the ground-track
+// heading. `center`/`ahead` are sub-points one minute apart (giving the heading);
+// alongRad/crossRad are the angular semi-axes (radians). Built as concentric
+// rings (centre + ELLIPSE_RINGS) so every triangle sits on the sphere surface.
+function buildEllipse(mesh, center, ahead, alongRad, crossRad) {
+  if (!(alongRad > 0) || !(crossRad > 0)) return false;
+  const c = latLonToScene(center.lat, center.lon, 1, new THREE.Vector3());
+  const a = latLonToScene(ahead.lat, ahead.lon, 1, new THREE.Vector3());
+  const tangent = new THREE.Vector3().subVectors(a, c);
+  if (tangent.lengthSq() < 1e-12) return false;
+  tangent.normalize();
+  const perp = new THREE.Vector3().crossVectors(c, tangent).normalize();
+  // Offsets live in the tangent plane; tan() keeps the on-sphere arc accurate.
+  const majorOff = Math.tan(alongRad);
+  const minorOff = Math.tan(crossRad);
+
+  // Vertices: one centre, then ELLIPSE_RINGS rings of ELLIPSE_SEGMENTS points.
+  const vertCount = 1 + ELLIPSE_RINGS * ELLIPSE_SEGMENTS;
+  const positions = new Float32Array(vertCount * 3);
+  const centre = c.clone().multiplyScalar(FOOTPRINT_RADIUS);
+  positions[0] = centre.x; positions[1] = centre.y; positions[2] = centre.z;
+  const d = new THREE.Vector3();
+  for (let r = 1; r <= ELLIPSE_RINGS; r++) {
+    const f = r / ELLIPSE_RINGS; // radial fraction (0 → centre, 1 → rim)
+    for (let s = 0; s < ELLIPSE_SEGMENTS; s++) {
+      const th = (s / ELLIPSE_SEGMENTS) * Math.PI * 2;
+      d.copy(c)
+        .addScaledVector(tangent, majorOff * f * Math.cos(th))
+        .addScaledVector(perp, minorOff * f * Math.sin(th))
+        .normalize().multiplyScalar(FOOTPRINT_RADIUS);
+      const o = (1 + (r - 1) * ELLIPSE_SEGMENTS + s) * 3;
+      positions[o] = d.x; positions[o + 1] = d.y; positions[o + 2] = d.z;
+    }
+  }
+
+  const idx = (r, s) => 1 + (r - 1) * ELLIPSE_SEGMENTS + (s % ELLIPSE_SEGMENTS);
+  const indices = [];
+  // Innermost ring fans off the centre vertex.
+  for (let s = 0; s < ELLIPSE_SEGMENTS; s++) indices.push(0, idx(1, s), idx(1, s + 1));
+  // Remaining rings are quad strips.
+  for (let r = 1; r < ELLIPSE_RINGS; r++) {
+    for (let s = 0; s < ELLIPSE_SEGMENTS; s++) {
+      const a0 = idx(r, s), a1 = idx(r, s + 1);
+      const b0 = idx(r + 1, s), b1 = idx(r + 1, s + 1);
+      indices.push(a0, b0, b1, a0, b1, a1);
+    }
+  }
+
+  const geo = mesh.geometry;
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeBoundingSphere();
+  return true;
 }
 
 // A white ring-with-crosshair sprite, tinted red for reentry impact points.

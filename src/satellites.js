@@ -96,13 +96,17 @@ export class SatelliteField {
     this.footprintLine.visible = false;
     this.footprintLine.frustumCulled = false;
 
-    // Camera-facing marker highlighting the selected satellite.
+    // Camera-facing marker highlighting the selected satellite. Additive
+    // blending with no depth write matches the glow points and atmosphere — a
+    // plain (normal-blended, depth-writing) sprite renders its transparent
+    // canvas as an opaque black quad against them.
     this.marker = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: makeRingSprite(),
         color: 0xffffff,
         transparent: true,
-        depthTest: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
       }),
     );
     this.marker.scale.setScalar(EARTH_RADIUS * 0.12);

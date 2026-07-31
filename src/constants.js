@@ -119,6 +119,32 @@ export const REENTRY_ALT_KM = 100;
 // their decay is too far out for a meaningful point estimate.
 export const REENTRY_HORIZON_DAYS = 30;
 
+// Reentry-time uncertainty grows with how far ahead the prediction reaches. A
+// common rule of thumb is that the error in the predicted reentry epoch is
+// roughly a fixed fraction of the remaining lead time (≈10–20%). We turn that
+// timing spread into an *along-track* corridor: the object walks its ground
+// track, so a ±Δt timing error becomes a ±(track distance covered in Δt) spread
+// in where it comes down. INNER/OUTER are the two fractions we shade.
+export const REENTRY_UNCERT_INNER = 0.10;
+export const REENTRY_UNCERT_OUTER = 0.20;
+// Even an "imminent" object gets a small corridor so the band is always visible.
+export const REENTRY_CORRIDOR_MIN_MS = 3 * 60 * 1000;
+// Cross-track spread is far smaller than along-track; drawn as a fixed-width
+// band (km, half-width) purely so the lozenge reads as a filled area, not a line.
+export const REENTRY_CORRIDOR_INNER_KM = 190;
+export const REENTRY_CORRIDOR_OUTER_KM = 320;
+
+// Quick time-jump steps offered in the time bar (label + signed milliseconds).
+// Handy for reaching a reentry that is days out even at the top time-warp.
+export const TIME_SKIPS = [
+  { label: '−1d', ms: -86400000 },
+  { label: '−6h', ms: -21600000 },
+  { label: '−1h', ms: -3600000 },
+  { label: '+1h', ms: 3600000 },
+  { label: '+6h', ms: 21600000 },
+  { label: '+1d', ms: 86400000 },
+];
+
 // Time-warp multipliers offered in the UI.
 export const SPEEDS = [1, 10, 60, 300, 1500];
 

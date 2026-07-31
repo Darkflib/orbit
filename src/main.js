@@ -7,10 +7,11 @@ import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { SatelliteField } from './satellites.js';
 import { fetchLayers, fetchDecaying } from './gp.js';
-import { LAYERS, LAYER_BY_ID, SPEEDS, EARTH_RADIUS } from './constants.js';
+import { LAYERS, LAYER_BY_ID, SPEEDS, TIME_SKIPS, EARTH_RADIUS } from './constants.js';
 import { sunDirectionScene, fmtClock, fmtDuration } from './utils.js';
 import {
-  estimateReentry, reentryStatusLabel, fmtReentryEta, fmtReentryLoc, ReentryMarkers,
+  estimateReentry, reentryStatusLabel, fmtReentryEta, fmtReentryLoc,
+  fmtUncertaintyWindow, ReentryMarkers, ReentryCorridor,
 } from './reentry.js';
 
 // ---- DOM handles ----------------------------------------------------------
@@ -32,12 +33,15 @@ const clock = {
     return this.simTime;
   },
   toNow() { this.simTime = Date.now(); },
+  skip(ms) { this.simTime += ms; },
+  jumpTo(ms) { this.simTime = ms; },
 };
 
 // ---- Boot -----------------------------------------------------------------
 const { renderer, scene, camera, controls, setSunDirection } = createScene(canvas);
 const field = new SatelliteField(scene);
 const reentryMarkers = new ReentryMarkers(scene);
+const reentryCorridor = new ReentryCorridor(scene);
 const raycaster = new THREE.Raycaster();
 
 let activeLayers = LAYERS.filter((l) => l.default);
@@ -55,6 +59,7 @@ let reentryEstimates = [];        // per field-index estimate (reentry mode only
 
 buildLayerToggles();
 buildSpeedButtons();
+buildSkipButtons();
 wireControls();
 animate();
 setMode('tracker'); // loads the default catalogue
@@ -216,7 +221,11 @@ function updateReentryInfo(idx) {
   $('re-status').textContent = reentryStatusLabel(est.status);
   $('re-when').textContent = est.reentryMs != null ? fmtClock(new Date(est.reentryMs)) : '—';
   $('re-loc').textContent = fmtReentryLoc(est.lat, est.lon);
+  $('re-window').textContent = est.reentryMs != null
+    ? fmtUncertaintyWindow(est.reentryMs - Date.now()) : '—';
   $('re-alt').textContent = est.altKm != null ? `${est.altKm.toFixed(0)} km` : '—';
+  // Jumping only makes sense when there's a concrete predicted time.
+  $('re-jump').disabled = est.reentryMs == null;
   updateReentryCountdown();
 }
 
@@ -224,9 +233,31 @@ function updateReentryCountdown() {
   if (mode !== 'reentry' || field.selected < 0) return;
   const est = reentryEstimates[field.selected];
   if (!est) return;
+  const past = est.reentryMs != null && clock.simTime > est.reentryMs;
   $('re-eta').textContent = est.reentryMs != null
     ? fmtReentryEta(est.reentryMs - clock.simTime)
     : reentryStatusLabel(est.status);
+  $('re-past').classList.toggle('hidden', !past);
+  reentryMarkers.setPast(past);
+}
+
+// Build the shaded impact corridor for the selected object, anchored to the
+// current (real-time) lead until its estimate.
+function updateReentryCorridor(idx) {
+  const est = reentryEstimates[idx];
+  if (est && est.reentryMs != null) {
+    reentryCorridor.show(field.satrecs[idx], est.reentryMs, Date.now());
+  } else {
+    reentryCorridor.hide();
+  }
+}
+
+// Point the external-reference links at the selected object's NORAD catalog id.
+function updateInfoLinks(rec) {
+  const id = encodeURIComponent(rec.norad);
+  $('link-n2yo').href = `https://www.n2yo.com/satellite/?s=${id}`;
+  $('link-celestrak').href = `https://celestrak.org/satcat/records.php?CATNR=${id}`;
+  $('link-heavens').href = `https://www.heavens-above.com/orbit.aspx?satid=${id}`;
 }
 
 function escapeHtml(s) {
@@ -317,6 +348,19 @@ function buildSpeedButtons() {
   }
 }
 
+function buildSkipButtons() {
+  const container = $('skip-btns');
+  container.innerHTML = '';
+  for (const s of TIME_SKIPS) {
+    const b = document.createElement('button');
+    b.className = 'sbtn';
+    b.textContent = s.label;
+    b.title = `Skip ${s.label} of simulated time`;
+    b.addEventListener('click', () => clock.skip(s.ms));
+    container.appendChild(b);
+  }
+}
+
 function buildSearchList() {
   const list = $('sat-list');
   list.innerHTML = '';
@@ -367,6 +411,17 @@ function wireControls() {
     $('clock-mult').textContent = '1×';
   });
 
+  // Jump the sim clock to the selected object's estimated reentry.
+  $('re-jump').addEventListener('click', () => {
+    if (mode !== 'reentry' || field.selected < 0) return;
+    const est = reentryEstimates[field.selected];
+    if (!est || est.reentryMs == null) return;
+    clock.jumpTo(est.reentryMs);
+    clock.speed = 1;
+    buildSpeedButtons();
+    $('clock-mult').textContent = '1×';
+  });
+
   // Info panel controls.
   $('sel-close').addEventListener('click', deselect);
   $('opt-orbit').addEventListener('change', (e) => field.setOverlayOption('orbit', e.target.checked));
@@ -397,9 +452,11 @@ function selectIndex(idx, recenter = false) {
   if (!rec) return;
   $('panel-right').classList.remove('hidden');
   $('sel-name').textContent = rec.name;
+  updateInfoLinks(rec);
   updateReentryInfo(idx);
   if (mode === 'reentry') {
     reentryMarkers.highlight(idx);
+    updateReentryCorridor(idx);
     markSelectedRow();
   }
   if (recenter) {
@@ -414,7 +471,9 @@ function deselect() {
   field.deselect();
   $('panel-right').classList.add('hidden');
   $('reentry-info').classList.add('hidden');
+  $('re-past').classList.add('hidden');
   reentryMarkers.highlight(-1);
+  reentryCorridor.hide();
   markSelectedRow();
 }
 
