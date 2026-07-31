@@ -268,6 +268,12 @@ html, body {
 .speed { display: flex; align-items: center; gap: 8px; }
 .speed .field-label { margin: 0; }
 .speed-btns { display: flex; gap: 4px; }
+.skip { display: flex; align-items: center; gap: 8px; }
+.skip .field-label { margin: 0; }
+.skip-btns { display: flex; gap: 4px; }
+/* Thin separators around the skip group so the three control clusters read
+   as distinct in the single time-bar pill. */
+.skip { padding: 0 12px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
 .sbtn {
   background: transparent;
   border: 1px solid var(--border);
@@ -430,6 +436,41 @@ body.mode-reentry #reentry-section { display: block; }
   letter-spacing: 0.02em;
 }
 .reentry-info .readout { gap: 10px 12px; }
+#re-jump { margin-top: 12px; }
+.re-past {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: #ffd0d0;
+  background: rgba(255, 77, 77, 0.12);
+  border: 1px solid rgba(255, 77, 77, 0.4);
+  border-radius: 8px;
+}
+.re-hint {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--subtle);
+}
+
+/* ---------- External info links ---------- */
+.sel-links {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.links-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.links-row a {
+  font-size: 0.76rem;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.links-row a:hover { background: var(--accent-dim); border-color: var(--accent); }
 
 /* ---------- Mobile ---------- */
 @media (max-width: 720px) {
@@ -439,4 +480,8 @@ body.mode-reentry #reentry-section { display: block; }
   .brand .subtle { display: none; }
   .clock { min-width: 120px; }
   #stat-source { display: none; }
+  /* The extra skip cluster can exceed a phone's width; let the bar scroll
+     horizontally rather than overflow the viewport. */
+  #timebar { max-width: calc(100vw - 20px); overflow-x: auto; }
+  .skip .field-label, .speed .field-label { display: none; }
 }
