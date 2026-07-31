@@ -411,15 +411,21 @@ function wireControls() {
     $('clock-mult').textContent = '1×';
   });
 
-  // Jump the sim clock to the selected object's estimated reentry.
+  // Jump the sim clock to the selected object's estimated reentry. Pause first:
+  // if playback stayed on, the next frame would advance simTime past the exact
+  // estimate, and updateReentryCountdown() would immediately flag it "past" —
+  // greying the reticle and showing the stale-elements warning on arrival.
   $('re-jump').addEventListener('click', () => {
     if (mode !== 'reentry' || field.selected < 0) return;
     const est = reentryEstimates[field.selected];
     if (!est || est.reentryMs == null) return;
+    clock.playing = false;
+    $('btn-play').textContent = '►';
     clock.jumpTo(est.reentryMs);
     clock.speed = 1;
     buildSpeedButtons();
     $('clock-mult').textContent = '1×';
+    updateReentryCountdown();
   });
 
   // Info panel controls.

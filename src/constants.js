@@ -81,7 +81,37 @@ export const LAYERS = [
     default: true,
   },
   {
-    // Loaded on demand via the "Load all active" button.
+    // Amazon's Kuiper LEO broadband constellation.
+    id: 'kuiper',
+    label: 'Kuiper',
+    color: '#34d399',
+    groups: ['kuiper'],
+    priority: 5,
+    default: true,
+  },
+  {
+    // Qianfan (千帆) — "Thousand Sails" / G60, a Chinese LEO broadband network.
+    id: 'qianfan',
+    label: 'Qianfan (Thousand Sails)',
+    color: '#f472b6',
+    groups: ['qianfan'],
+    priority: 6,
+    default: true,
+  },
+  {
+    // Guowang (国网) / GW — China SatNet's LEO network. CelesTrak files it under
+    // the "hulianwang" (Hulianwang Digui) group.
+    id: 'guowang',
+    label: 'Guowang (GW)',
+    color: '#818cf8',
+    groups: ['hulianwang'],
+    priority: 7,
+    default: true,
+  },
+  {
+    // Everything else in the active catalogue, loaded on demand via the "Load
+    // all active" button. Priority is highest so the constellation layers above
+    // claim their own satellites out of this catch-all first.
     id: 'other',
     label: 'Other active',
     color: '#94a3b8',
