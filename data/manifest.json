@@ -1,0 +1,1 @@
+{"buckets":71,"counts":{"droppedDecayed":34003,"records":36174,"withGcat":35564,"withMag":3015,"withMagEst":12842},"generatedAt":"2026-08-01T11:00:55.585Z","schemaVersion":1,"sources":{"gcat":{"fetchedAt":"2026-08-01T10:16:41.815Z","ok":true,"rows":69376},"mmccants":{"ok":true,"rows":4156,"vendored":true},"satcat":{"fetchedAt":"2026-08-01T10:16:36.997Z","ok":true,"rows":70177}}}

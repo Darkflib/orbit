@@ -117,6 +117,10 @@ html, body {
 .panel-body { padding: 12px 14px; overflow-y: auto; }
 .panel.collapsed .panel-body,
 .panel.collapsed .panel-section { display: none; }
+/* The reentry watch list is force-shown in reentry mode by a more specific,
+   id-bearing rule (body.mode-reentry #reentry-section), so the generic collapse
+   rule above can't hide it. Override with matching specificity. */
+.panel.collapsed #reentry-section { display: none; }
 
 .panel-section {
   padding: 12px 14px;
@@ -484,4 +488,84 @@ body.mode-reentry #reentry-section { display: block; }
      horizontally rather than overflow the viewport. */
   #timebar { max-width: calc(100vw - 20px); overflow-x: auto; }
   .skip .field-label, .speed .field-label { display: none; }
+}
+
+/* ---------- Catalogue enrichment (selection panel) ---------- */
+.sel-enrich { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.enrich-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 8px; }
+#enrich-readout { margin-bottom: 8px; }
+.enrich-sources { margin: 8px 0 0; font-size: 0.68rem; color: var(--subtle); }
+
+/* Brightness badge */
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 3px 9px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.02em;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.badge.tiny { padding: 1px 7px; font-size: 0.62rem; }
+.bright-naked-eye  { background: rgba(250, 204, 21, 0.18); color: #facc15; border-color: rgba(250, 204, 21, 0.35); }
+.bright-dark-sky   { background: rgba(163, 230, 53, 0.16); color: #a3e635; border-color: rgba(163, 230, 53, 0.30); }
+.bright-binoculars { background: var(--accent-dim); color: var(--accent); border-color: rgba(56, 189, 248, 0.30); }
+.bright-telescope  { background: rgba(148, 163, 184, 0.16); color: #94a3b8; border-color: rgba(148, 163, 184, 0.28); }
+/* Estimated (per-constellation) magnitudes: dashed border signals "not measured". */
+.badge-est { border-style: dashed; }
+
+/* Catalogue tab active state */
+#mode-catalogue.active { background: rgba(52, 211, 153, 0.16); color: #34d399; }
+
+/* ---------- Catalogue overlay ---------- */
+.catalogue {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: rgba(3, 5, 10, 0.72);
+  backdrop-filter: blur(4px);
+  padding: 64px 16px 16px;
+}
+.cat-panel {
+  width: min(980px, 100%); height: min(80vh, 760px);
+  display: flex; flex-direction: column;
+  background: var(--panel-solid);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.cat-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.cat-header h2 { margin: 0; font-size: 1rem; }
+.cat-header #cat-count { flex: 1; font-size: 0.8rem; }
+.cat-filters {
+  display: flex; gap: 8px; padding: 12px 16px;
+  border-bottom: 1px solid var(--border); flex-wrap: wrap;
+}
+.cat-filters input, .cat-filters select {
+  padding: 8px 10px; background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+  font-size: 0.85rem;
+}
+.cat-filters input { flex: 1; min-width: 180px; }
+.cat-body { flex: 1; display: grid; grid-template-columns: 1.2fr 1fr; min-height: 0; }
+.cat-list {
+  list-style: none; margin: 0; padding: 6px;
+  overflow-y: auto; border-right: 1px solid var(--border);
+}
+.cat-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 4px 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+}
+.cat-row:hover { background: rgba(255, 255, 255, 0.05); }
+.cat-row.active { background: var(--accent-dim); }
+.cat-name { font-size: 0.9rem; grid-column: 1; }
+.cat-meta { grid-column: 1; font-size: 0.72rem; color: var(--subtle); font-variant-numeric: tabular-nums; }
+.cat-row .badge { grid-column: 2; grid-row: 1 / span 2; }
+.cat-detail { padding: 16px; overflow-y: auto; }
+.cat-detail h3 { margin: 0 0 10px; font-size: 1rem; }
+.cat-detail-empty { margin-top: 24px; text-align: center; }
+.cat-detail-actions { margin-top: 14px; }
+.cat-foot { padding: 10px 16px; border-top: 1px solid var(--border); font-size: 0.72rem; }
+
+@media (max-width: 720px) {
+  .cat-body { grid-template-columns: 1fr; }
+  .cat-detail { border-top: 1px solid var(--border); }
 }

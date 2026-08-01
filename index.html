@@ -40,6 +40,7 @@
     <div class="modeswitch" role="tablist" aria-label="View mode">
       <button id="mode-tracker" class="active" role="tab" aria-selected="true">Tracker</button>
       <button id="mode-reentry" role="tab" aria-selected="false">Reentry</button>
+      <button id="mode-catalogue" role="tab" aria-selected="false" aria-haspopup="dialog">Catalogue</button>
     </div>
     <div class="stats">
       <span id="stat-sats" class="pill">0 satellites</span>
@@ -106,6 +107,16 @@
         <div><dt>Group</dt><dd id="sel-group">—</dd></div>
       </dl>
 
+      <!-- Catalogue enrichment (lazy-loaded by NORAD id; absent = not shown) -->
+      <div id="sel-enrich" class="sel-enrich hidden">
+        <div class="enrich-head">
+          <span class="field-label">Catalogue</span>
+          <span id="enrich-badge" class="badge hidden"></span>
+        </div>
+        <dl class="readout" id="enrich-readout"></dl>
+        <p id="enrich-sources" class="enrich-sources"></p>
+      </div>
+
       <!-- Reentry estimate (shown only for decaying objects in reentry mode) -->
       <div id="reentry-info" class="reentry-info hidden">
         <div class="reentry-status" id="re-status">—</div>
@@ -166,6 +177,39 @@
   </footer>
 
   <div id="error-toast" class="toast hidden"></div>
+
+  <!-- Catalogue browser (overlay over the scene; opened from the topbar tab) -->
+  <section id="catalogue" class="catalogue hidden" role="dialog" aria-modal="true" aria-label="Satellite catalogue">
+    <div class="cat-panel">
+      <header class="cat-header">
+        <h2>Catalogue</h2>
+        <span id="cat-count" class="subtle">—</span>
+        <button id="cat-close" class="collapse-btn" title="Close catalogue">×</button>
+      </header>
+      <div class="cat-filters">
+        <input id="cat-search" type="search" placeholder="Search name or NORAD id…" autocomplete="off" />
+        <select id="cat-type" aria-label="Object type">
+          <option value="">All types</option>
+          <option value="payload">Payloads</option>
+          <option value="rocket-body">Rocket bodies</option>
+          <option value="debris">Debris</option>
+          <option value="unknown">Unknown</option>
+        </select>
+        <select id="cat-bright" aria-label="Brightness">
+          <option value="">Any brightness</option>
+          <option value="any">Has magnitude</option>
+          <option value="naked">Naked-eye</option>
+        </select>
+      </div>
+      <div class="cat-body">
+        <ul id="cat-list" class="cat-list" role="listbox" aria-label="Catalogue results"></ul>
+        <aside id="cat-detail" class="cat-detail">
+          <p class="cat-detail-empty subtle">Select an object to see its full catalogue record.</p>
+        </aside>
+      </div>
+      <footer id="cat-foot" class="cat-foot subtle"></footer>
+    </div>
+  </section>
 
   <script type="module" src="./src/main.js"></script>
 </body>
