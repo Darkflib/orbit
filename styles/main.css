@@ -117,6 +117,10 @@ html, body {
 .panel-body { padding: 12px 14px; overflow-y: auto; }
 .panel.collapsed .panel-body,
 .panel.collapsed .panel-section { display: none; }
+/* The reentry watch list is force-shown in reentry mode by a more specific,
+   id-bearing rule (body.mode-reentry #reentry-section), so the generic collapse
+   rule above can't hide it. Override with matching specificity. */
+.panel.collapsed #reentry-section { display: none; }
 
 .panel-section {
   padding: 12px 14px;
