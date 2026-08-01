@@ -43,6 +43,9 @@ export async function writeOutputs(dataDir, records, manifest, sourceMeta) {
     opsStatus: r.opsStatus ?? null,
     rcsSize: r.rcsSize ?? null,
     stdMag: r.stdMag ?? null,
+    // Present (1) only for constellation-estimated magnitudes, so the browser
+    // can mark them; omitted otherwise to keep the index lean.
+    ...(r.magSource === 'estimate' ? { magEst: 1 } : {}),
   }));
   await writeFile(join(dataDir, 'catalog-index.json'), stringify(index));
 

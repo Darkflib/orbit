@@ -19,8 +19,8 @@ export function validate({ satcatRows, counts }) {
   if (gcatFrac < GCAT_JOIN_MIN) {
     warnings.push(`GCAT join only ${(gcatFrac * 100).toFixed(1)}% (< ${GCAT_JOIN_MIN * 100}%) — metadata degraded, check GCAT join key`);
   }
-  if (counts.withMag === 0) {
-    warnings.push('no records carry a magnitude — brightness badge will be empty; check qs.mag vendor file');
+  if (counts.withMag === 0 && (counts.withMagEst || 0) === 0) {
+    warnings.push('no records carry a magnitude (measured or estimated) — brightness badge will be empty; check qs.mag vendor file and constellation fallback');
   }
 
   return { warnings };

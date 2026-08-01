@@ -572,7 +572,15 @@ function enrichRows(rec) {
     : null);
   add('Dimensions', fmtDims(rec.dimensions));
   add('Orbit class', rec.orbitClass);
-  add('Std. magnitude', rec.stdMag != null ? `${rec.stdMag.toFixed(1)} (intrinsic)` : null);
+  if (rec.stdMag != null) {
+    const est = rec.magSource === 'estimate';
+    add(
+      est ? 'Est. magnitude' : 'Std. magnitude',
+      est
+        ? `~${rec.stdMag.toFixed(1)} (est. · ${rec.magBasis || 'constellation'})`
+        : `${rec.stdMag.toFixed(1)} (intrinsic)`,
+    );
+  }
   return rows;
 }
 
@@ -583,8 +591,11 @@ function renderEnrich(rec, { readoutEl, badgeEl, sourcesEl }) {
   if (badgeEl) {
     const b = brightnessClass(rec.stdMag);
     if (b) {
-      badgeEl.textContent = b.label;
-      badgeEl.className = `badge bright-${b.key}`;
+      const est = rec.magSource === 'estimate';
+      badgeEl.textContent = (est ? '~' : '') + b.label;
+      badgeEl.className = `badge bright-${b.key}` + (est ? ' badge-est' : '');
+      if (est) badgeEl.title = `Estimated from ${rec.magBasis || 'constellation'} — no individual measurement`;
+      else badgeEl.removeAttribute('title');
     } else {
       badgeEl.className = 'badge hidden';
     }
@@ -628,9 +639,10 @@ async function openCatalogue() {
     const man = await loadManifest();
     if (man) {
       const age = man.generatedAt ? fmtDuration(Date.now() - Date.parse(man.generatedAt)) : 'unknown';
+      const est = man.counts.withMagEst ? ` (+${man.counts.withMagEst.toLocaleString()} estimated)` : '';
       $('cat-foot').textContent =
         `${man.counts.records.toLocaleString()} objects · ` +
-        `magnitudes for ${man.counts.withMag.toLocaleString()} · updated ${age}`;
+        `magnitudes for ${man.counts.withMag.toLocaleString()}${est} · updated ${age}`;
     }
   }
   renderCatList();
@@ -673,7 +685,11 @@ function renderCatList() {
       `<span class="cat-meta">${escapeHtml(r.norad)}` +
       `${r.objectType ? ` · ${escapeHtml(TYPE_SHORT[r.objectType] || r.objectType)}` : ''}` +
       `${r.country ? ` · ${escapeHtml(r.country)}` : ''}</span>` +
-      (b ? `<span class="badge tiny bright-${b.key}">${b.label}</span>` : '');
+      (b
+        ? `<span class="badge tiny bright-${b.key}${r.magEst ? ' badge-est' : ''}"` +
+          `${r.magEst ? ' title="Estimated (constellation typical)"' : ''}>` +
+          `${r.magEst ? '~' : ''}${b.label}</span>`
+        : '');
     li.addEventListener('click', () => selectCatRow(r.norad, li));
     frag.appendChild(li);
   }

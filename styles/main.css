@@ -508,6 +508,8 @@ body.mode-reentry #reentry-section { display: block; }
 .bright-dark-sky   { background: rgba(163, 230, 53, 0.16); color: #a3e635; border-color: rgba(163, 230, 53, 0.30); }
 .bright-binoculars { background: var(--accent-dim); color: var(--accent); border-color: rgba(56, 189, 248, 0.30); }
 .bright-telescope  { background: rgba(148, 163, 184, 0.16); color: #94a3b8; border-color: rgba(148, 163, 184, 0.28); }
+/* Estimated (per-constellation) magnitudes: dashed border signals "not measured". */
+.badge-est { border-style: dashed; }
 
 /* Catalogue tab active state */
 #mode-catalogue.active { background: rgba(52, 211, 153, 0.16); color: #34d399; }

@@ -5,6 +5,8 @@
 // §3; the winning source id is stamped into `_sources` (attribution + trust).
 // Finally the 12-month decay window is applied.
 
+import { estimateMag } from './constellations.mjs';
+
 const DAY_MS = 86400000;
 
 // Resolve a field from an ordered list of [sourceId, value] candidates; first
@@ -31,7 +33,7 @@ function set(rec, field, value) {
 export function merge({ satcat, gcat, mmccants }, now) {
   const cutoff = new Date(now).getTime() - 365 * DAY_MS;
   const out = new Map();
-  const counts = { records: 0, withGcat: 0, withMag: 0, droppedDecayed: 0 };
+  const counts = { records: 0, withGcat: 0, withMag: 0, withMagEst: 0, droppedDecayed: 0 };
 
   for (const [norad, s] of satcat) {
     const g = gcat.get(norad) || {};
@@ -64,7 +66,20 @@ export function merge({ satcat, gcat, mmccants }, now) {
     set(rec, 'rcsValue_m2', pick(src, 'rcsValue_m2', [['satcat', s.rcsValue_m2]]));
 
     set(rec, 'stdMag', pick(src, 'stdMag', [['mmccants', m.stdMag]]));
-    if (rec.stdMag !== undefined) rec.magSource = 'mmccants';
+    if (rec.stdMag !== undefined) {
+      rec.magSource = 'mmccants';
+    } else {
+      // Fallback: a per-constellation estimate for objects mmccants doesn't
+      // measure. Always flagged as an estimate (magSource/magBasis) so the UI
+      // can label it. Depends on name + launchDate, both already set above.
+      const est = estimateMag(rec);
+      if (est) {
+        rec.stdMag = est.mag;
+        rec.magSource = 'estimate';
+        rec.magBasis = est.label;
+        src.stdMag = 'estimate';
+      }
+    }
 
     // Decay date & the 12-month window use SATCAT only. GCAT's DDate has broader
     // semantics — it also marks assembly/renaming (e.g. Zarya's DDate is 1998,
@@ -83,7 +98,8 @@ export function merge({ satcat, gcat, mmccants }, now) {
     out.set(norad, rec);
     counts.records++;
     if (gcat.has(norad)) counts.withGcat++;
-    if (rec.stdMag !== undefined) counts.withMag++;
+    if (rec.magSource === 'mmccants') counts.withMag++;
+    else if (rec.magSource === 'estimate') counts.withMagEst++;
   }
 
   return { records: out, counts };

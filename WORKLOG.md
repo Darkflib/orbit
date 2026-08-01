@@ -56,8 +56,12 @@ GCAT · CelesTrak · McCants. Starlink degrades cleanly (metadata, no magnitude)
    classic bright objects (ISS, rocket bodies, NOSS), sparse for modern LEO
    constellations. This is astronomically honest (a lone Starlink ~mag 5 is a marginal
    naked-eye target), but it means the brightness badge is blank for most Starlink.
-   **Open question for you:** worth adding per-constellation default magnitudes
-   (Starlink/OneWeb bus) as a Tier-1.5 so those get a badge too? Deferred pending your call.
+   **Resolved (2026-08-01):** added a per-constellation magnitude fallback
+   (`scripts/enrich/constellations.mjs`), applied only when there's no measured
+   value and always labelled estimated (magSource `estimate`, dashed badge, "~"
+   prefix, "est." in the readout, "estimate" in the sources line). Covers 12,842
+   objects (11,381 Starlink). Starlink is launch-date-split: pre-visor v0.9/v1.0
+   (before 2020-06, 179 still active) get the brighter ~4.5; coated sats ~5.5.
 
 4. **Bucketing is NORAD/1000** (`enrichment/25.json` = 25000–25999), not the 3-digit
    prefix the doc first sketched — length-independent, handles 6-digit ids. Client and
