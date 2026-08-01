@@ -113,9 +113,12 @@ not fixed byte offsets, so a column reorder doesn't corrupt data silently.
   magnitudes). Host has moved historically — **confirm the current canonical URL
   at implementation time**; if zipped, unzip in-adapter (Node `zlib` +
   minimal ZIP read, or fetch an unzipped mirror if available).
-- **Format:** fixed-width text. Standard magnitude is defined at **1000 km range,
-  50 % illumination** — exactly the schema's `stdMag` definition, so it maps
-  directly with no photometric conversion.
+- **Format:** fixed-width text. The intrinsic magnitude is defined at **1000 km
+  range, full phase** — McCants' quicksat.txt: "the maximum apparent brightness
+  of the satellite when it is seen at full phase at a range of 1000 kilometers".
+  Matches the schema's `stdMag`, so it maps directly with no photometric
+  conversion. (The visibility calc's phase function is normalised to full phase
+  to stay consistent with this reference.)
 - **Join key:** catalog number → `norad`.
 - **Fields → schema:** `stdMag` (numeric), `magSource: "mmccants"`.
 - **Degradation:** on failure, records simply lack `stdMag`. **This is the

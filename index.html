@@ -46,6 +46,7 @@
       <span id="stat-sats" class="pill">0 satellites</span>
       <span id="stat-fps" class="pill">– fps</span>
       <span id="stat-source" class="pill" title="Time since TLE data was fetched">cache: –</span>
+      <button id="open-settings" class="pill pill-btn" title="Your location & visibility settings">⚙ Location</button>
     </div>
   </header>
 
@@ -117,6 +118,20 @@
         <p id="enrich-sources" class="enrich-sources"></p>
       </div>
 
+      <!-- Visibility from the observer's location (Tier 2/3; needs a location) -->
+      <div id="sel-visibility" class="sel-visibility hidden">
+        <div class="enrich-head">
+          <span class="field-label">Visible from you?</span>
+          <span id="vis-state" class="badge"></span>
+        </div>
+        <dl class="readout" id="vis-readout"></dl>
+      </div>
+      <div id="vis-prompt" class="sel-visibility vis-prompt hidden">
+        <span class="field-label">Visibility</span>
+        <p class="subtle">Set your location to see whether this object is visible and where to look.</p>
+        <button id="vis-set-loc" class="wide-btn ghost">Set location…</button>
+      </div>
+
       <!-- Reentry estimate (shown only for decaying objects in reentry mode) -->
       <div id="reentry-info" class="reentry-info hidden">
         <div class="reentry-status" id="re-status">—</div>
@@ -177,6 +192,36 @@
   </footer>
 
   <div id="error-toast" class="toast hidden"></div>
+
+  <!-- Settings: observer location (client-side only), opened from the topbar -->
+  <section id="settings" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="modal-panel">
+      <header class="modal-header">
+        <h2>Your location</h2>
+        <button id="settings-close" class="collapse-btn" title="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="subtle">
+          Used to compute whether a satellite is visible from where you are and
+          which way to look. Stored only in this browser — never sent anywhere.
+        </p>
+        <div class="settings-grid">
+          <label class="field-label">Latitude
+            <input id="set-lat" type="number" step="0.0001" min="-90" max="90" placeholder="e.g. 51.4769" />
+          </label>
+          <label class="field-label">Longitude
+            <input id="set-lon" type="number" step="0.0001" min="-180" max="180" placeholder="e.g. -0.0005" />
+          </label>
+        </div>
+        <button id="set-geo" class="wide-btn ghost">Use my current location</button>
+        <div class="settings-actions">
+          <button id="set-save" class="wide-btn">Save location</button>
+          <button id="set-clear" class="wide-btn ghost">Clear</button>
+        </div>
+        <p id="set-status" class="subtle"></p>
+      </div>
+    </div>
+  </section>
 
   <!-- Catalogue browser (overlay over the scene; opened from the topbar tab) -->
   <section id="catalogue" class="catalogue hidden" role="dialog" aria-modal="true" aria-label="Satellite catalogue">

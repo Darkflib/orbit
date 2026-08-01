@@ -1,4 +1,46 @@
-# Worklog — Tier 1 data enrichment
+# Worklog — data enrichment & visibility
+
+## 2026-08-01 — Tier 2/3 built (observer location + visibility + look direction)
+
+Adds "can I see it right now, and where do I look?" on top of the Tier 1
+magnitude data. Built after Tier 1 shipped in PR #7.
+
+### What landed
+- `src/visibility.js` — pure physics: look angles (az/el/range via satellite.js),
+  apparent magnitude (intrinsic + range + diffuse-sphere phase term), cylindrical
+  Earth-shadow sunlit test, observer sky state (day/twilight/dark), and a
+  `state` verdict (below-horizon | shadow | daylight | visible). Plus a 16-point
+  `compass()`.
+- `src/utils.js` — extracted `sunDirectionEci()` (shared by scene lighting and
+  visibility) from `sunDirectionScene()`.
+- `src/satellites.js` — `updateSelection()` now also returns the selected sat's
+  ECI position + gmst.
+- `src/main.js` + `index.html` + CSS:
+  - **Settings dialog** (topbar "⚙ Location"): manual lat/lon + "Use my current
+    location" (Geolocation opt-in), persisted in localStorage, **never sent
+    anywhere**. No permission prompt on load.
+  - **Visibility section** in the selection panel, updated live (~2 Hz) in the
+    render loop: state badge, look direction (compass + elevation), range,
+    apparent magnitude (only when sunlit; carries the Tier-1 "est." flag),
+    sat sunlit/shadow, and observer sky.
+
+### Verified (deterministic geometry tests, not just eyeballing)
+
+| Scenario | state | sky | sunlit | el | mag |
+|---|---|---|---|---|---|
+| overhead, dusk | visible | dark | ✓ | 90° | −2.3 |
+| overhead, midday | daylight | day | ✓ | 90° | −0.4 |
+| overhead, midnight | shadow | dark | ✗ | 90° | — |
+| London, now | below-horizon | day | ✓ | −21° | — |
+
+Range 493 km overhead; compass 0°→N, 157°→SSE, 340°→NNW; apparent magnitude
+fainter at higher sun (phase term working). Settings dialog + persistence + live
+panel confirmed in-browser.
+
+### Notes
+- Model is intrinsic-magnitude based; no atmospheric extinction near the horizon
+  and a simple cylindrical (no-penumbra) shadow — fine for "roughly, can I see
+  it." Pass predictions ("next visible pass tonight") are Tier 4, not built.
 
 ## 2026-08-01 — Tier 1 built (enrichment pipeline + Catalogue + brightness)
 

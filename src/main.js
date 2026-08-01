@@ -8,7 +8,8 @@ import { createScene } from './scene.js';
 import { SatelliteField } from './satellites.js';
 import { fetchLayers, fetchDecaying } from './gp.js';
 import { LAYERS, LAYER_BY_ID, SPEEDS, TIME_SKIPS, EARTH_RADIUS } from './constants.js';
-import { sunDirectionScene, fmtClock, fmtDuration } from './utils.js';
+import { sunDirectionScene, sunDirectionEci, fmtClock, fmtDuration } from './utils.js';
+import { computeVisibility, compass } from './visibility.js';
 import {
   estimateReentry, reentryStatusLabel, fmtReentryEta, fmtReentryLoc,
   fmtUncertaintyWindow, ReentryMarkers, ReentryCorridor,
@@ -60,6 +61,8 @@ let enrichReqNorad = null;   // guards the in-flight selection-panel enrichment 
 let catReqNorad = null;      // guards the in-flight catalogue detail fetch
 let catalogueOpen = false;
 let catIndex = null;
+let selectedEnrichment = null; // enrichment record of the selected sat (for stdMag)
+let observer = loadObserver(); // { lat, lon, altKm } or null — observer location
 
 // ---- View mode ------------------------------------------------------------
 // 'tracker' — the full satellite catalogue (default).
@@ -309,6 +312,7 @@ function animate() {
     fpsAnchor = nowp;
     updateCacheAge();
     if (mode === 'reentry') refreshReentryEtas();
+    if (sel && observer) updateVisibility(sel, date);
   }
 }
 
@@ -465,8 +469,22 @@ function wireControls() {
   $('cat-type').addEventListener('change', () => renderCatList());
   $('cat-bright').addEventListener('change', () => renderCatList());
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && catalogueOpen) closeCatalogue();
+    const settingsOpen = !$('settings').classList.contains('hidden');
+    if (e.key === 'Escape') {
+      if (catalogueOpen) closeCatalogue();
+      if (settingsOpen) closeSettings();
+    } else if (e.key === 'Tab' && settingsOpen) {
+      trapTab(e, $('settings')); // keep focus within the modal dialog
+    }
   });
+
+  // Settings / observer location (Tier 2/3).
+  $('open-settings').addEventListener('click', openSettings);
+  $('settings-close').addEventListener('click', closeSettings);
+  $('set-geo').addEventListener('click', useGeolocation);
+  $('set-save').addEventListener('click', saveSettings);
+  $('set-clear').addEventListener('click', clearSettings);
+  $('vis-set-loc').addEventListener('click', openSettings);
 
   // Collapse left panel.
   $('toggle-left').addEventListener('click', () => {
@@ -481,6 +499,7 @@ function selectIndex(idx, recenter = false) {
   $('sel-name').textContent = rec.name;
   updateInfoLinks(rec);
   showEnrichment(rec.norad);
+  updateVisibilitySection();
   updateReentryInfo(idx);
   if (mode === 'reentry') {
     reentryMarkers.highlight(idx);
@@ -500,6 +519,8 @@ function deselect() {
   $('panel-right').classList.add('hidden');
   $('sel-enrich').classList.add('hidden');
   enrichReqNorad = null;
+  selectedEnrichment = null;
+  updateVisibilitySection();
   $('reentry-info').classList.add('hidden');
   $('re-past').classList.add('hidden');
   reentryMarkers.highlight(-1);
@@ -616,8 +637,10 @@ async function showEnrichment(norad) {
   const box = $('sel-enrich');
   box.classList.add('hidden');
   enrichReqNorad = norad;
+  selectedEnrichment = null;
   const rec = await getEnrichment(norad);
   if (enrichReqNorad !== norad) return; // superseded by a newer selection
+  selectedEnrichment = rec; // feeds apparent-magnitude in the visibility panel
   if (!rec) return;
   renderEnrich(rec, {
     readoutEl: $('enrich-readout'), badgeEl: $('enrich-badge'), sourcesEl: $('enrich-sources'),
@@ -735,6 +758,140 @@ async function selectCatRow(norad, li) {
     btn.title = 'Enable its layer (or “Load all active”) to view it in 3D.';
   }
   detail.querySelector('.cat-detail-actions').appendChild(btn);
+}
+
+// ---- Observer location & visibility (Tier 2/3) ----------------------------
+const OBSERVER_KEY = 'orbit.observer';
+
+function loadObserver() {
+  try {
+    const v = JSON.parse(localStorage.getItem(OBSERVER_KEY));
+    return v && typeof v.lat === 'number' && typeof v.lon === 'number' ? v : null;
+  } catch { return null; }
+}
+
+function saveObserver(o) {
+  observer = o;
+  try {
+    if (o) localStorage.setItem(OBSERVER_KEY, JSON.stringify(o));
+    else localStorage.removeItem(OBSERVER_KEY);
+  } catch { /* private mode — session-only is fine */ }
+  updateVisibilitySection();
+}
+
+function fmtLatLon(o) {
+  return `${o.lat.toFixed(3)}°, ${o.lon.toFixed(3)}°`;
+}
+
+let settingsReturnFocus = null;
+function openSettings() {
+  settingsReturnFocus = document.activeElement;
+  $('settings').classList.remove('hidden');
+  if (observer) { $('set-lat').value = observer.lat; $('set-lon').value = observer.lon; }
+  $('set-status').textContent = observer ? `Current: ${fmtLatLon(observer)}` : 'No location set.';
+  $('set-lat').focus(); // move focus into the dialog for keyboard/SR users
+}
+function closeSettings() {
+  $('settings').classList.add('hidden');
+  // Restore focus to whatever opened the dialog (usually the ⚙ Location button).
+  const back = settingsReturnFocus && settingsReturnFocus.focus ? settingsReturnFocus : $('open-settings');
+  settingsReturnFocus = null;
+  back.focus();
+}
+
+// Keep Tab focus inside `container` while it is open (basic focus trap).
+function trapTab(e, container) {
+  const focusable = [...container.querySelectorAll('button, input, [href], [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.disabled && el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+function useGeolocation() {
+  if (!navigator.geolocation) {
+    $('set-status').textContent = 'Geolocation is not available in this browser.';
+    return;
+  }
+  $('set-status').textContent = 'Locating…';
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      $('set-lat').value = pos.coords.latitude.toFixed(4);
+      $('set-lon').value = pos.coords.longitude.toFixed(4);
+      $('set-status').textContent = 'Location found — Save to apply.';
+    },
+    (err) => { $('set-status').textContent = `Couldn't get location: ${err.message}`; },
+    { enableHighAccuracy: false, timeout: 10000 },
+  );
+}
+
+function saveSettings() {
+  const lat = parseFloat($('set-lat').value);
+  const lon = parseFloat($('set-lon').value);
+  if (Number.isNaN(lat) || Number.isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    $('set-status').textContent = 'Enter a valid latitude (−90…90) and longitude (−180…180).';
+    return;
+  }
+  saveObserver({ lat, lon, altKm: 0 });
+  $('set-status').textContent = `Saved: ${fmtLatLon(observer)}`;
+  closeSettings();
+}
+
+function clearSettings() {
+  saveObserver(null);
+  $('set-lat').value = '';
+  $('set-lon').value = '';
+  $('set-status').textContent = 'Location cleared.';
+}
+
+// Show the visibility block (or the "set location" prompt) for the current
+// selection + observer state. The live values are filled by updateVisibility().
+function updateVisibilitySection() {
+  const selected = field.selected >= 0;
+  $('sel-visibility').classList.toggle('hidden', !(selected && observer));
+  $('vis-prompt').classList.toggle('hidden', !(selected && !observer));
+}
+
+const VIS_STATE = {
+  visible: { label: 'Visible now', cls: 'vis-visible' },
+  shadow: { label: "In Earth's shadow", cls: 'vis-shadow' },
+  daylight: { label: 'Daylight — too bright', cls: 'vis-day' },
+  'below-horizon': { label: 'Below the horizon', cls: 'vis-below' },
+};
+
+// Compute and render observer-relative visibility for the selected satellite.
+function updateVisibility(sel, date) {
+  if (!observer || !sel || !sel.eci) return;
+  const sun = sunDirectionEci(date);
+  const stdMag = selectedEnrichment && selectedEnrichment.stdMag != null ? selectedEnrichment.stdMag : null;
+  const est = selectedEnrichment && selectedEnrichment.magSource === 'estimate';
+  const v = computeVisibility(sel.eci, sel.gmst, observer, sun, stdMag);
+
+  const s = VIS_STATE[v.state];
+  const badge = $('vis-state');
+  badge.textContent = s.label;
+  badge.className = `badge ${s.cls}`;
+
+  const rows = [];
+  if (v.elevation > 0) {
+    rows.push(['Look toward', `${compass(v.azimuth)} · ${v.azimuth.toFixed(0)}°`]);
+    rows.push(['Elevation', `${v.elevation.toFixed(0)}° above horizon`]);
+  } else {
+    rows.push(['Below horizon', `${Math.abs(v.elevation).toFixed(0)}° down`]);
+  }
+  rows.push(['Range', `${Math.round(v.rangeKm).toLocaleString()} km`]);
+  // Apparent magnitude is only meaningful for a sunlit satellite — an eclipsed
+  // one reflects no sunlight regardless of how intrinsically bright it is.
+  if (v.apparentMag != null && v.satSunlit) {
+    rows.push([est ? 'Est. brightness' : 'Brightness', `mag ${v.apparentMag.toFixed(1)}${est ? ' (est.)' : ''}`]);
+  }
+  rows.push(['Satellite', v.satSunlit ? 'Sunlit' : 'In shadow']);
+  rows.push(['Your sky', v.sky === 'day' ? 'Daylight' : v.sky === 'twilight' ? 'Twilight' : 'Dark']);
+  $('vis-readout').innerHTML = rows
+    .map(([k, val]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(val)}</dd></div>`)
+    .join('');
 }
 
 // ---- Loading / toast ------------------------------------------------------
