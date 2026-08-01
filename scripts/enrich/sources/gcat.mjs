@@ -48,6 +48,15 @@ function num(s) {
   return Number.isNaN(v) ? null : v;
 }
 
+// Positive numeric field or null. GCAT stores 0 as a "no measurement" sentinel
+// for physical quantities (mass, length, diameter, span), so treat any
+// non-positive value as missing — otherwise it surfaces as "0 kg" / "Ø 0 m" and,
+// via the nullish-coalescing fallback, blocks a real value in a later column.
+function posNum(s) {
+  const v = num(s);
+  return v != null && v > 0 ? v : null;
+}
+
 function str(s) {
   const t = (s || '').trim();
   return t && t !== '-' ? t : null;
@@ -90,10 +99,10 @@ export async function load(http = { getText }) {
     if (!/^\d+$/.test(satcat)) continue; // only NORAD-numbered objects join
     const norad = String(parseInt(satcat, 10));
 
-    const mass = num(f[col.TotMass]) ?? num(f[col.Mass]) ?? num(f[col.DryMass]);
-    const length = num(f[col.Length]);
-    const diameter = num(f[col.Diameter]);
-    const span = num(f[col.Span]);
+    const mass = posNum(f[col.TotMass]) ?? posNum(f[col.Mass]) ?? posNum(f[col.DryMass]);
+    const length = posNum(f[col.Length]);
+    const diameter = posNum(f[col.Diameter]);
+    const span = posNum(f[col.Span]);
     const dims = {};
     if (span != null) dims.span_m = span;
     if (length != null) dims.length_m = length;

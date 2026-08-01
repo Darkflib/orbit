@@ -57,6 +57,7 @@ let fpsAnchor = performance.now();
 // in the file) because deselect() runs during boot, before those lines would
 // otherwise initialise — a temporal-dead-zone trap.
 let enrichReqNorad = null;   // guards the in-flight selection-panel enrichment fetch
+let catReqNorad = null;      // guards the in-flight catalogue detail fetch
 let catalogueOpen = false;
 let catIndex = null;
 
@@ -703,7 +704,9 @@ async function selectCatRow(norad, li) {
   if (li) li.classList.add('active');
   const detail = $('cat-detail');
   detail.innerHTML = '<p class="subtle">Loading…</p>';
+  catReqNorad = norad;
   const rec = await getEnrichment(norad);
+  if (catReqNorad !== norad) return; // superseded by a newer row selection
   if (!rec) { detail.innerHTML = '<p class="subtle">No catalogue record for this object.</p>'; return; }
 
   detail.innerHTML =
