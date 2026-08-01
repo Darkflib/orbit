@@ -1,0 +1,76 @@
+# Rebuild the enrichment catalogue (SATCAT + GCAT + mmccants) on a slow cadence
+# and redeploy the site with fresh data. Decoupled from the 2-hour GP hot path,
+# which runs client-side and is never touched here.
+#
+# Deploy model: this workflow builds data/ fresh and deploys the WHOLE tree
+# (app + freshly built data) as the Pages artifact — deploy-pages publishes an
+# artifact as the entire site. It shares static.yml's `concurrency: pages`
+# group so the two serialise instead of racing. The committed data/ in the repo
+# is the seed static.yml serves between enrich runs; this job overwrites it with
+# a fresh build at deploy time. Change history is appended to an orphan
+# `enrichment-data` branch (best-effort — never blocks the deploy).
+name: Refresh enrichment data
+
+on:
+  schedule:
+    # Daily, off the hour. Conditional-GET (scripts/enrich/http.mjs) makes a
+    # no-change run cheap; the validation gate aborts before deploy on breakage.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # push the orphan enrichment-data history branch
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  enrich:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Build enrichment data
+        run: node scripts/enrich/build.mjs
+
+      - name: Append change history to enrichment-data branch (best-effort)
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin enrichment-data || true
+          if git show-ref --verify --quiet refs/remotes/origin/enrichment-data; then
+            git worktree add /tmp/datab enrichment-data
+          else
+            git worktree add --orphan -b enrichment-data /tmp/datab
+          fi
+          rm -rf /tmp/datab/data
+          cp -r data /tmp/datab/data
+          cd /tmp/datab
+          git add -A data
+          git commit -m "data: refresh ${GITHUB_RUN_ID}" && git push origin enrichment-data \
+            || echo "no enrichment change this run"
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact (app + fresh data)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -13,6 +13,9 @@ import {
   estimateReentry, reentryStatusLabel, fmtReentryEta, fmtReentryLoc,
   fmtUncertaintyWindow, ReentryMarkers, ReentryCorridor,
 } from './reentry.js';
+import {
+  getEnrichment, loadIndex, loadManifest, brightnessClass,
+} from './enrichment.js';
 
 // ---- DOM handles ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -49,6 +52,13 @@ let followSelected = false;
 let gpFetchedAt = 0;
 let frames = 0;
 let fpsAnchor = performance.now();
+
+// Enrichment / Catalogue state. Declared here (not beside their functions lower
+// in the file) because deselect() runs during boot, before those lines would
+// otherwise initialise — a temporal-dead-zone trap.
+let enrichReqNorad = null;   // guards the in-flight selection-panel enrichment fetch
+let catalogueOpen = false;
+let catIndex = null;
 
 // ---- View mode ------------------------------------------------------------
 // 'tracker' — the full satellite catalogue (default).
@@ -447,6 +457,16 @@ function wireControls() {
   $('mode-reentry').addEventListener('click', () => { if (mode !== 'reentry') setMode('reentry'); });
   $('reentry-refresh').addEventListener('click', () => loadReentry({ force: true }));
 
+  // Catalogue browser (overlay dialog; independent of the tracker/reentry mode).
+  $('mode-catalogue').addEventListener('click', () => (catalogueOpen ? closeCatalogue() : openCatalogue()));
+  $('cat-close').addEventListener('click', closeCatalogue);
+  $('cat-search').addEventListener('input', () => renderCatList());
+  $('cat-type').addEventListener('change', () => renderCatList());
+  $('cat-bright').addEventListener('change', () => renderCatList());
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && catalogueOpen) closeCatalogue();
+  });
+
   // Collapse left panel.
   $('toggle-left').addEventListener('click', () => {
     $('panel-left').classList.toggle('collapsed');
@@ -459,6 +479,7 @@ function selectIndex(idx, recenter = false) {
   $('panel-right').classList.remove('hidden');
   $('sel-name').textContent = rec.name;
   updateInfoLinks(rec);
+  showEnrichment(rec.norad);
   updateReentryInfo(idx);
   if (mode === 'reentry') {
     reentryMarkers.highlight(idx);
@@ -476,6 +497,8 @@ function selectIndex(idx, recenter = false) {
 function deselect() {
   field.deselect();
   $('panel-right').classList.add('hidden');
+  $('sel-enrich').classList.add('hidden');
+  enrichReqNorad = null;
   $('reentry-info').classList.add('hidden');
   $('re-past').classList.add('hidden');
   reentryMarkers.highlight(-1);
@@ -509,6 +532,190 @@ function updateLayerCounts() {
 function updateCacheAge() {
   if (!gpFetchedAt) return;
   $('stat-source').textContent = `GP ${fmtDuration(Date.now() - gpFetchedAt)}`;
+}
+
+// ---- Catalogue enrichment -------------------------------------------------
+// Shared rendering for the enrichment detail shown both in the selection panel
+// and in the Catalogue browser's detail pane.
+
+const SRC_LABEL = { satcat: 'CelesTrak', gcat: 'GCAT', mmccants: 'McCants' };
+const TYPE_SHORT = { payload: 'Payload', 'rocket-body': 'R/B', debris: 'Debris', unknown: '?' };
+
+function titleCase(s) {
+  return String(s).replace(/-/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+}
+
+function fmtDims(d) {
+  if (!d) return null;
+  const parts = [];
+  if (d.length_m != null) parts.push(`L ${d.length_m} m`);
+  if (d.diameter_m != null) parts.push(`Ø ${d.diameter_m} m`);
+  if (d.span_m != null) parts.push(`span ${d.span_m} m`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+// Ordered [label, value] rows for an enrichment record (skips absent fields).
+function enrichRows(rec) {
+  const rows = [];
+  const add = (label, val) => { if (val != null && val !== '') rows.push([label, val]); };
+  add('Type', rec.objectType && titleCase(rec.objectType));
+  add('Status', rec.status && titleCase(rec.status));
+  add('Op. status', rec.opsStatus && titleCase(rec.opsStatus));
+  add('Operator', rec.owner);
+  add('Country', rec.country);
+  add('COSPAR', rec.cospar);
+  add('Launched', rec.launchDate);
+  add('Launch site', rec.launchSite);
+  add('Mass', rec.massKg != null ? `${rec.massKg.toLocaleString()} kg` : null);
+  add('Size (RCS)', rec.rcsSize
+    ? titleCase(rec.rcsSize) + (rec.rcsValue_m2 != null ? ` · ${rec.rcsValue_m2.toFixed(2)} m²` : '')
+    : null);
+  add('Dimensions', fmtDims(rec.dimensions));
+  add('Orbit class', rec.orbitClass);
+  add('Std. magnitude', rec.stdMag != null ? `${rec.stdMag.toFixed(1)} (intrinsic)` : null);
+  return rows;
+}
+
+function renderEnrich(rec, { readoutEl, badgeEl, sourcesEl }) {
+  readoutEl.innerHTML = enrichRows(rec)
+    .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`)
+    .join('');
+  if (badgeEl) {
+    const b = brightnessClass(rec.stdMag);
+    if (b) {
+      badgeEl.textContent = b.label;
+      badgeEl.className = `badge bright-${b.key}`;
+    } else {
+      badgeEl.className = 'badge hidden';
+    }
+  }
+  if (sourcesEl) {
+    const srcs = [...new Set(Object.values(rec._sources || {}).map((s) => s.split(':')[0]))];
+    sourcesEl.textContent = srcs.length
+      ? `Sources: ${srcs.map((s) => SRC_LABEL[s] || s).join(' · ')}`
+      : '';
+  }
+}
+
+// Lazily fill the selection panel's enrichment block. Guarded against a
+// selection changing while the bucket fetch is in flight (enrichReqNorad,
+// declared with the module state near the top).
+async function showEnrichment(norad) {
+  const box = $('sel-enrich');
+  box.classList.add('hidden');
+  enrichReqNorad = norad;
+  const rec = await getEnrichment(norad);
+  if (enrichReqNorad !== norad) return; // superseded by a newer selection
+  if (!rec) return;
+  renderEnrich(rec, {
+    readoutEl: $('enrich-readout'), badgeEl: $('enrich-badge'), sourcesEl: $('enrich-sources'),
+  });
+  box.classList.remove('hidden');
+}
+
+// ---- Catalogue browser ----------------------------------------------------
+// (catalogueOpen / catIndex declared with the module state near the top.)
+const CAT_CAP = 400; // max rows rendered at once; count shows the full match total
+
+async function openCatalogue() {
+  catalogueOpen = true;
+  $('catalogue').classList.remove('hidden');
+  $('mode-catalogue').classList.add('active');
+  $('mode-catalogue').setAttribute('aria-selected', 'true');
+  if (!catIndex) {
+    $('cat-count').textContent = 'Loading…';
+    catIndex = await loadIndex();
+    const man = await loadManifest();
+    if (man) {
+      const age = man.generatedAt ? fmtDuration(Date.now() - Date.parse(man.generatedAt)) : 'unknown';
+      $('cat-foot').textContent =
+        `${man.counts.records.toLocaleString()} objects · ` +
+        `magnitudes for ${man.counts.withMag.toLocaleString()} · updated ${age}`;
+    }
+  }
+  renderCatList();
+  $('cat-search').focus();
+}
+
+function closeCatalogue() {
+  catalogueOpen = false;
+  $('catalogue').classList.add('hidden');
+  $('mode-catalogue').classList.remove('active');
+  $('mode-catalogue').setAttribute('aria-selected', 'false');
+}
+
+function renderCatList() {
+  const q = $('cat-search').value.trim().toLowerCase();
+  const type = $('cat-type').value;
+  const bright = $('cat-bright').value;
+  const rows = [];
+  let matched = 0;
+  for (const r of catIndex) {
+    if (type && r.objectType !== type) continue;
+    if (bright === 'any' && r.stdMag == null) continue;
+    if (bright === 'naked' && !(r.stdMag != null && r.stdMag <= 6.0)) continue;
+    if (q && !(r.name || '').toLowerCase().includes(q) && !r.norad.startsWith(q)) continue;
+    matched++;
+    if (rows.length < CAT_CAP) rows.push(r);
+  }
+  $('cat-count').textContent = `${matched.toLocaleString()} object${matched === 1 ? '' : 's'}` +
+    (matched > rows.length ? ` · showing first ${rows.length}` : '');
+
+  const frag = document.createDocumentFragment();
+  for (const r of rows) {
+    const li = document.createElement('li');
+    li.className = 'cat-row';
+    li.dataset.norad = r.norad;
+    li.setAttribute('role', 'option');
+    const b = brightnessClass(r.stdMag);
+    li.innerHTML =
+      `<span class="cat-name">${escapeHtml(r.name || `NORAD ${r.norad}`)}</span>` +
+      `<span class="cat-meta">${escapeHtml(r.norad)}` +
+      `${r.objectType ? ` · ${escapeHtml(TYPE_SHORT[r.objectType] || r.objectType)}` : ''}` +
+      `${r.country ? ` · ${escapeHtml(r.country)}` : ''}</span>` +
+      (b ? `<span class="badge tiny bright-${b.key}">${b.label}</span>` : '');
+    li.addEventListener('click', () => selectCatRow(r.norad, li));
+    frag.appendChild(li);
+  }
+  const list = $('cat-list');
+  list.innerHTML = '';
+  list.appendChild(frag);
+}
+
+async function selectCatRow(norad, li) {
+  $('cat-list').querySelectorAll('.cat-row.active').forEach((el) => el.classList.remove('active'));
+  if (li) li.classList.add('active');
+  const detail = $('cat-detail');
+  detail.innerHTML = '<p class="subtle">Loading…</p>';
+  const rec = await getEnrichment(norad);
+  if (!rec) { detail.innerHTML = '<p class="subtle">No catalogue record for this object.</p>'; return; }
+
+  detail.innerHTML =
+    `<h3>${escapeHtml(rec.name || `NORAD ${norad}`)}</h3>` +
+    '<div class="enrich-head"><span id="cat-detail-badge" class="badge hidden"></span></div>' +
+    '<dl class="readout" id="cat-detail-readout"></dl>' +
+    '<p id="cat-detail-sources" class="enrich-sources"></p>' +
+    '<div class="cat-detail-actions"></div>';
+  renderEnrich(rec, {
+    readoutEl: $('cat-detail-readout'),
+    badgeEl: $('cat-detail-badge'),
+    sourcesEl: $('cat-detail-sources'),
+  });
+
+  // Offer a jump into the 3D view only when the object is in the loaded field.
+  const fieldIdx = field.records.findIndex((x) => x.norad === String(norad));
+  const btn = document.createElement('button');
+  if (fieldIdx >= 0) {
+    btn.className = 'wide-btn';
+    btn.textContent = 'Show in 3D';
+    btn.addEventListener('click', () => { closeCatalogue(); selectIndex(fieldIdx, true); });
+  } else {
+    btn.className = 'wide-btn ghost';
+    btn.textContent = 'Not in current view';
+    btn.disabled = true;
+    btn.title = 'Enable its layer (or “Load all active”) to view it in 3D.';
+  }
+  detail.querySelector('.cat-detail-actions').appendChild(btn);
 }
 
 // ---- Loading / toast ------------------------------------------------------
