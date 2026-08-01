@@ -569,3 +569,43 @@ body.mode-reentry #reentry-section { display: block; }
   .cat-body { grid-template-columns: 1fr; }
   .cat-detail { border-top: 1px solid var(--border); }
 }
+
+/* ---------- Location pill button + Settings modal ---------- */
+.pill-btn { cursor: pointer; font: inherit; font-size: 0.72rem; }
+.pill-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: rgba(3, 5, 10, 0.72); backdrop-filter: blur(4px);
+  padding: 16px;
+}
+.modal-panel {
+  width: min(420px, 100%);
+  background: var(--panel-solid); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.modal-header h2 { margin: 0; font-size: 1rem; }
+.modal-body { padding: 16px; }
+.modal-body p { margin: 0 0 14px; line-height: 1.45; font-size: 0.82rem; }
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.settings-grid input {
+  display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); font-size: 0.9rem;
+}
+.settings-actions { display: flex; gap: 8px; margin-top: 10px; }
+.settings-actions .wide-btn { margin: 0; }
+#set-status { margin: 12px 0 0; min-height: 1em; }
+
+/* ---------- Visibility section (selection panel) ---------- */
+.sel-visibility { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.vis-prompt p { margin: 6px 0 10px; font-size: 0.8rem; line-height: 1.4; }
+.vis-visible { background: rgba(52, 211, 153, 0.18); color: #34d399; border-color: rgba(52, 211, 153, 0.35); }
+.vis-shadow  { background: rgba(129, 140, 248, 0.16); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.30); }
+.vis-day     { background: rgba(250, 204, 21, 0.16); color: #facc15; border-color: rgba(250, 204, 21, 0.30); }
+.vis-below   { background: rgba(148, 163, 184, 0.16); color: #94a3b8; border-color: rgba(148, 163, 184, 0.28); }

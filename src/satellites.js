@@ -298,6 +298,8 @@ export class SatelliteField {
       period: fmtPeriod(periodMin),
       inc: `${incDeg.toFixed(1)}°`,
       scenePosition: pos,
+      eci: pv.position, // ECI km — for observer-relative visibility (Tier 2/3)
+      gmst,
     };
   }
 
