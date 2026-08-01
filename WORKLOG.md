@@ -25,6 +25,7 @@ magnitude data. Built after Tier 1 shipped in PR #7.
     sat sunlit/shadow, and observer sky.
 
 ### Verified (deterministic geometry tests, not just eyeballing)
+
 | Scenario | state | sky | sunlit | el | mag |
 |---|---|---|---|---|---|
 | overhead, dusk | visible | dark | ✓ | 90° | −2.3 |

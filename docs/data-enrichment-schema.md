@@ -68,7 +68,7 @@ record is the union of whatever sources resolved.
   "rcsValue_m2": null,           // numeric if a source has it
 
   // ---- brightness / visibility (the hinge) ----
-  "stdMag": -1.8,                // standard magnitude: 1000 km range, 50% illum (mmccants qsmag)
+  "stdMag": -1.8,                // intrinsic magnitude: 1000 km range, full phase (mmccants qsmag)
   "magSource": "mmccants",
 
   // ---- lifecycle ----

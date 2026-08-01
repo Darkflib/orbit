@@ -70,6 +70,10 @@ export function computeVisibility(satEci, gmst, observer, sunEci, stdMag) {
   const satSunlit = !(proj < 0 && perp < EARTH_RADIUS_KM);
 
   // Apparent magnitude = intrinsic + range term + phase term.
+  // stdMag (mmccants) is defined at 1000 km and FULL phase, and phaseFn is
+  // normalised to 1 at full phase — so at the reference condition the phase term
+  // is 0 and apparentMag == stdMag, no offset. (Normalising to 90°/half-phase
+  // instead would systematically over-brighten by ~1.24 mag against this source.)
   let apparentMag = null;
   if (stdMag != null) {
     const obsEci = satellite.ecfToEci(satellite.geodeticToEcf(observerGd), gmst);

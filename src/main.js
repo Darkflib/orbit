@@ -469,9 +469,13 @@ function wireControls() {
   $('cat-type').addEventListener('change', () => renderCatList());
   $('cat-bright').addEventListener('change', () => renderCatList());
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (catalogueOpen) closeCatalogue();
-    if (!$('settings').classList.contains('hidden')) closeSettings();
+    const settingsOpen = !$('settings').classList.contains('hidden');
+    if (e.key === 'Escape') {
+      if (catalogueOpen) closeCatalogue();
+      if (settingsOpen) closeSettings();
+    } else if (e.key === 'Tab' && settingsOpen) {
+      trapTab(e, $('settings')); // keep focus within the modal dialog
+    }
   });
 
   // Settings / observer location (Tier 2/3).
@@ -779,12 +783,32 @@ function fmtLatLon(o) {
   return `${o.lat.toFixed(3)}°, ${o.lon.toFixed(3)}°`;
 }
 
+let settingsReturnFocus = null;
 function openSettings() {
+  settingsReturnFocus = document.activeElement;
   $('settings').classList.remove('hidden');
   if (observer) { $('set-lat').value = observer.lat; $('set-lon').value = observer.lon; }
   $('set-status').textContent = observer ? `Current: ${fmtLatLon(observer)}` : 'No location set.';
+  $('set-lat').focus(); // move focus into the dialog for keyboard/SR users
 }
-function closeSettings() { $('settings').classList.add('hidden'); }
+function closeSettings() {
+  $('settings').classList.add('hidden');
+  // Restore focus to whatever opened the dialog (usually the ⚙ Location button).
+  const back = settingsReturnFocus && settingsReturnFocus.focus ? settingsReturnFocus : $('open-settings');
+  settingsReturnFocus = null;
+  back.focus();
+}
+
+// Keep Tab focus inside `container` while it is open (basic focus trap).
+function trapTab(e, container) {
+  const focusable = [...container.querySelectorAll('button, input, [href], [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.disabled && el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
 
 function useGeolocation() {
   if (!navigator.geolocation) {
