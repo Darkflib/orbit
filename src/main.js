@@ -644,10 +644,13 @@ async function showEnrichment(norad) {
   box.classList.add('hidden');
   enrichReqNorad = norad;
   selectedEnrichment = null;
+  updatePasses();           // refresh for the new sat now (no-magnitude) so the
+                            // panel never shows the previous sat's passes while
+                            // the enrichment bucket is still being fetched
   const rec = await getEnrichment(norad);
   if (enrichReqNorad !== norad) return; // superseded by a newer selection
   selectedEnrichment = rec; // feeds apparent-magnitude in the visibility panel
-  updatePasses();           // recompute passes now that the magnitude is known
+  updatePasses();           // recompute now that the magnitude is known
   if (!rec) return;
   renderEnrich(rec, {
     readoutEl: $('enrich-readout'), badgeEl: $('enrich-badge'), sourcesEl: $('enrich-sources'),
@@ -882,7 +885,11 @@ function updatePasses() {
 function dayPrefix(d) {
   const now = new Date();
   const today = now.toDateString();
-  const tomorrow = new Date(now.getTime() + 86400e3).toDateString();
+  // Advance by a calendar day (setDate), not +24h — the latter mislabels dates
+  // across a daylight-saving transition.
+  const tmr = new Date(now);
+  tmr.setDate(tmr.getDate() + 1);
+  const tomorrow = tmr.toDateString();
   if (d.toDateString() === today) return '';
   if (d.toDateString() === tomorrow) return 'Tomorrow ';
   return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} `;
@@ -897,9 +904,10 @@ function renderPasses(passes, total, geomVisible, est, haveMag) {
     for (const p of passes) {
       const li = document.createElement('li');
       li.className = 'pass-row';
-      // A very short visible window (≤1 sample) is a brief culmination/shadow-edge
-      // sighting — show the single peak time rather than a "21:14–21:14" range.
-      const when = (p.visibleEnd - p.visibleStart) < 60e3
+      // A single-sample window (start === end) is a brief culmination/shadow-edge
+      // sighting — show the one time rather than a "21:14–21:14" range. A genuine
+      // two-sample (30 s) window keeps its range.
+      const when = p.visibleEnd === p.visibleStart
         ? `${dayPrefix(new Date(p.peakTime))}${hhmm(p.peakTime)}`
         : `${dayPrefix(new Date(p.visibleStart))}${hhmm(p.visibleStart)}–${hhmm(p.visibleEnd)}`;
       const mag = p.peakMag != null

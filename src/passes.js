@@ -44,30 +44,40 @@ export function predictPasses(satrec, observer, fromMs, stdMag, {
   const finalize = () => {
     if (samples.length) {
       total++;
-      let peak = samples[0];
-      for (const s of samples) if (s.v.elevation > peak.v.elevation) peak = s;
+      if (samples.some((s) => s.v.state === 'visible')) geomVisible++;
 
-      const vis = samples.filter((s) => s.v.state === 'visible');
-      if (vis.length) {
-        geomVisible++;
-        // Brightest (lowest-magnitude) sample in the visible window.
-        let bright = null;
-        for (const s of vis) {
-          if (s.v.apparentMag != null && (bright === null || s.v.apparentMag < bright.v.apparentMag)) bright = s;
-        }
-        const peakMag = bright ? bright.v.apparentMag : null;
-        // Keep it if bright enough (or if magnitude is unknown — can't rule out).
-        if ((peakMag == null || peakMag <= maxMag) && passes.length < maxPasses) {
+      // A single geometric pass can hold several separate visible windows (it can
+      // dip into Earth's shadow and re-emerge). Emit one record per *contiguous*
+      // run of samples that are both visible and naked-eye bright, and derive the
+      // window's peak/brightness from that run only — never from shadowed or
+      // too-faint samples on either side.
+      const shows = (s) => s.v.state === 'visible'
+        && (s.v.apparentMag == null || s.v.apparentMag <= maxMag);
+      let run = [];
+      const flush = () => {
+        if (run.length && passes.length < maxPasses) {
+          let peak = run[0];
+          let bright = null;
+          for (const s of run) {
+            if (s.v.elevation > peak.v.elevation) peak = s;
+            if (s.v.apparentMag != null && (bright === null || s.v.apparentMag < bright.v.apparentMag)) bright = s;
+          }
           passes.push({
-            visibleStart: vis[0].t,
-            visibleEnd: vis[vis.length - 1].t,
+            visibleStart: run[0].t,
+            visibleEnd: run[run.length - 1].t,
             peakTime: peak.t,
             peakElevation: peak.v.elevation,
             peakAzimuth: peak.v.azimuth,
-            peakMag,
+            peakMag: bright ? bright.v.apparentMag : null,
           });
         }
+        run = [];
+      };
+      for (const s of samples) {
+        if (shows(s)) run.push(s);
+        else flush();
       }
+      flush();
     }
     samples = [];
   };
