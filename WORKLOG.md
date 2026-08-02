@@ -1,5 +1,34 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-02 — Test harness for the physics
+
+Added unit tests for the visibility/pass/ephemeris math, on Node's built-in
+runner (`node --test`) — 16 tests, all pure (no browser, no network).
+
+### What landed
+- `test/visibility.test.mjs` — `compass()`; all four `computeVisibility` states
+  (visible / daylight / shadow / below-horizon) via controlled geometry; sky
+  day/twilight/dark; null-magnitude; closer-range-is-brighter.
+- `test/passes.test.mjs` — a fixed ISS TLE + fixed epoch (deterministic) scanned
+  over an observer grid; asserts the invariants the PR #10 review established:
+  peak always within `[visibleStart, visibleEnd]`, peak elevation ≥ gate, window
+  magnitude ≤ cutoff, faint object → 0 naked-eye passes (but sunlit count kept),
+  unknown-magnitude not excluded, `maxPasses` respected.
+- `test/ephemeris.test.mjs` — J2000 epoch, unit-vector sun direction, equinox
+  z≈0, solstice declination.
+- `package.json`: `test` script + one dev-only dependency (`satellite.js@7.1.0`,
+  matching the CDN import map); `package-lock.json` committed for `npm ci`.
+- `.github/workflows/test.yml` — runs `npm ci && npm test` on push + PR.
+
+### Small refactor (enabling)
+- Extracted the pure solar-ephemeris math (`sunDirectionEci`, `dateToJulian`)
+  into a new dependency-free `src/ephemeris.js`. `utils.js` re-exports them (it
+  keeps the three.js scene helpers); `passes.js` imports from there. Now the
+  physics modules (`visibility.js`, `passes.js`) don't transitively pull in
+  three.js, so tests need only `satellite.js`. App verified unchanged in-browser.
+
+
+
 ## 2026-08-02 — Tier 4 built (visible-pass predictions)
 
 Adds "when's the next time I can see this?" — upcoming visible passes for the

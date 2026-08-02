@@ -11,11 +11,25 @@ cd orbit
 npm start          # serves at http://localhost:8080
 ```
 
-There is no build step and there are no npm dependencies — the app loads
+There is no build step and the app has no runtime dependencies — it loads
 three.js and satellite.js from a CDN via an import map. You just need Node 18+
 to run the bundled static server (`serve.mjs`), or any static file server
 (`python3 -m http.server`, `npx serve`, etc.). The app must be served over
 HTTP, not opened via `file://`, because it uses ES module workers and `fetch`.
+
+### Tests
+
+The physics helpers (visibility, pass prediction, ephemeris) have unit tests
+that run on Node's built-in test runner:
+
+```bash
+npm install       # one dev-only dependency: satellite.js (the app still uses the CDN)
+npm test
+```
+
+Tests live in `test/` and are pure — no browser or network. They cover the
+visibility state machine, apparent-magnitude phase model, pass-window logic, and
+the solar ephemeris. CI runs them on every push and pull request.
 
 ## Project layout
 
