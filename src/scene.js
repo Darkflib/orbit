@@ -28,7 +28,11 @@ export function createScene(canvas) {
   controls.dampingFactor = 0.06;
   controls.rotateSpeed = 0.55;
   controls.minDistance = EARTH_RADIUS * 1.08;
-  controls.maxDistance = EARTH_RADIUS * 12;
+  // Allow zooming out far enough to frame a full geostationary orbit (radius
+  // ~42,164 km ≈ 6.6 Earth radii) pole-on within the 45° FOV — the previous
+  // ×12 cap (~76 units) couldn't fit it, so GEO orbits ran off-screen. ×24
+  // (~153 units) also comfortably contains HEO/Molniya apogees.
+  controls.maxDistance = EARTH_RADIUS * 24;
   controls.zoomSpeed = 0.8;
 
   // --- Lighting ---
