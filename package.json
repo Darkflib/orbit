@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "start": "node serve.mjs",
-    "dev": "node serve.mjs"
+    "dev": "node serve.mjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "satellite.js": "7.1.0"
   },
   "keywords": [
     "satellites",

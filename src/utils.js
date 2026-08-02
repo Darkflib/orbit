@@ -25,22 +25,11 @@ export function latLonToScene(latDeg, lonDeg, radius, target = new THREE.Vector3
   );
 }
 
-// Geocentric direction to the Sun as a unit vector in ECI. Good to a fraction
-// of a degree — ample for terminator lighting and visibility geometry. Shared
-// by the scene lighting (sunDirectionScene) and the visibility calculation.
-export function sunDirectionEci(date) {
-  const jd = dateToJulian(date);
-  const n = jd - 2451545.0; // days since J2000.0
-  const L = (280.46 + 0.9856474 * n) * DEG2RAD; // mean longitude
-  const g = (357.528 + 0.9856003 * n) * DEG2RAD; // mean anomaly
-  const lambda = L + (1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * DEG2RAD; // ecliptic long.
-  const epsilon = 23.439 * DEG2RAD; // obliquity
-  return {
-    x: Math.cos(lambda),
-    y: Math.cos(epsilon) * Math.sin(lambda),
-    z: Math.sin(epsilon) * Math.sin(lambda),
-  };
-}
+// Sun-ephemeris / time math live in the dependency-free ephemeris module so the
+// physics can use them without three.js. Imported for local use (sunDirectionScene)
+// and re-exported so existing callers of ./utils.js keep working.
+import { sunDirectionEci, dateToJulian } from './ephemeris.js';
+export { sunDirectionEci, dateToJulian };
 
 // Sun direction as a unit vector in scene space (for lighting the terminator).
 export function sunDirectionScene(date, target = new THREE.Vector3()) {
@@ -53,10 +42,6 @@ export function sunDirectionScene(date, target = new THREE.Vector3()) {
   const yEcef = -sin * xEci + cos * yEci;
   const zEcef = zEci;
   return ecefKmToScene(xEcef, yEcef, zEcef, target).normalize();
-}
-
-export function dateToJulian(date) {
-  return date.getTime() / 86400000 + 2440587.5;
 }
 
 // ---------------------------------------------------------------------------

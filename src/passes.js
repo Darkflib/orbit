@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 import * as satellite from 'satellite.js';
 import { DEG2RAD, RAD2DEG } from './constants.js';
-import { sunDirectionEci } from './utils.js';
+import { sunDirectionEci } from './ephemeris.js';
 import { computeVisibility } from './visibility.js';
 
 // Predict visible passes.
