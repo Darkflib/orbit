@@ -10,6 +10,7 @@ import { fetchLayers, fetchDecaying } from './gp.js';
 import { LAYERS, LAYER_BY_ID, SPEEDS, TIME_SKIPS, EARTH_RADIUS } from './constants.js';
 import { sunDirectionScene, sunDirectionEci, fmtClock, fmtDuration } from './utils.js';
 import { computeVisibility, compass } from './visibility.js';
+import { predictPasses } from './passes.js';
 import {
   estimateReentry, reentryStatusLabel, fmtReentryEta, fmtReentryLoc,
   fmtUncertaintyWindow, ReentryMarkers, ReentryCorridor,
@@ -62,6 +63,11 @@ let catReqNorad = null;      // guards the in-flight catalogue detail fetch
 let catalogueOpen = false;
 let catIndex = null;
 let selectedEnrichment = null; // enrichment record of the selected sat (for stdMag)
+// OBSERVER_KEY must be declared before loadObserver() runs on this line — it is
+// a const referenced inside loadObserver(), so a later declaration would sit in
+// the temporal dead zone, throw, and silently yield null (persisted location
+// then ignored until re-saved).
+const OBSERVER_KEY = 'orbit.observer';
 let observer = loadObserver(); // { lat, lon, altKm } or null — observer location
 
 // ---- View mode ------------------------------------------------------------
@@ -641,6 +647,7 @@ async function showEnrichment(norad) {
   const rec = await getEnrichment(norad);
   if (enrichReqNorad !== norad) return; // superseded by a newer selection
   selectedEnrichment = rec; // feeds apparent-magnitude in the visibility panel
+  updatePasses();           // recompute passes now that the magnitude is known
   if (!rec) return;
   renderEnrich(rec, {
     readoutEl: $('enrich-readout'), badgeEl: $('enrich-badge'), sourcesEl: $('enrich-sources'),
@@ -761,7 +768,8 @@ async function selectCatRow(norad, li) {
 }
 
 // ---- Observer location & visibility (Tier 2/3) ----------------------------
-const OBSERVER_KEY = 'orbit.observer';
+// OBSERVER_KEY is declared with the module state near the top (it must exist
+// before the boot-time loadObserver() call).
 
 function loadObserver() {
   try {
@@ -777,6 +785,7 @@ function saveObserver(o) {
     else localStorage.removeItem(OBSERVER_KEY);
   } catch { /* private mode — session-only is fine */ }
   updateVisibilitySection();
+  updatePasses(); // location changed — recompute upcoming passes
 }
 
 function fmtLatLon(o) {
@@ -852,6 +861,67 @@ function updateVisibilitySection() {
   const selected = field.selected >= 0;
   $('sel-visibility').classList.toggle('hidden', !(selected && observer));
   $('vis-prompt').classList.toggle('hidden', !(selected && !observer));
+  if (!(selected && observer)) $('sel-passes').classList.add('hidden');
+}
+
+// ---- Visible-pass predictions ---------------------------------------------
+// Passes are predicted from real wall-clock time (a "when do I go out" question),
+// independent of the sim clock, and re-run on selection / location change.
+function updatePasses() {
+  const box = $('sel-passes');
+  if (field.selected < 0 || !observer) { box.classList.add('hidden'); return; }
+  const satrec = field.satrecs[field.selected];
+  if (!satrec) { box.classList.add('hidden'); return; }
+  const stdMag = selectedEnrichment && selectedEnrichment.stdMag != null ? selectedEnrichment.stdMag : null;
+  const est = !!(selectedEnrichment && selectedEnrichment.magSource === 'estimate');
+  const { passes, total, geomVisible } = predictPasses(satrec, observer, Date.now(), stdMag, { hours: 24 });
+  renderPasses(passes, total, geomVisible, est, stdMag != null);
+  box.classList.remove('hidden');
+}
+
+function dayPrefix(d) {
+  const now = new Date();
+  const today = now.toDateString();
+  const tomorrow = new Date(now.getTime() + 86400e3).toDateString();
+  if (d.toDateString() === today) return '';
+  if (d.toDateString() === tomorrow) return 'Tomorrow ';
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} `;
+}
+const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function renderPasses(passes, total, geomVisible, est, haveMag) {
+  const list = $('passes-list');
+  const note = $('passes-note');
+  list.innerHTML = '';
+  if (passes.length) {
+    for (const p of passes) {
+      const li = document.createElement('li');
+      li.className = 'pass-row';
+      // A very short visible window (≤1 sample) is a brief culmination/shadow-edge
+      // sighting — show the single peak time rather than a "21:14–21:14" range.
+      const when = (p.visibleEnd - p.visibleStart) < 60e3
+        ? `${dayPrefix(new Date(p.peakTime))}${hhmm(p.peakTime)}`
+        : `${dayPrefix(new Date(p.visibleStart))}${hhmm(p.visibleStart)}–${hhmm(p.visibleEnd)}`;
+      const mag = p.peakMag != null
+        ? ` · mag ${p.peakMag.toFixed(1)}${est ? ' (est.)' : ''}`
+        : '';
+      li.innerHTML =
+        `<span class="pass-when">${escapeHtml(when)}</span>` +
+        `<span class="pass-meta">max ${p.peakElevation.toFixed(0)}° ${compass(p.peakAzimuth)}${mag}</span>`;
+      list.appendChild(li);
+    }
+    note.textContent = 'Times in your local timezone · next 24 h.';
+  } else {
+    let msg;
+    if (geomVisible > 0 && haveMag) {
+      msg = `${geomVisible} sunlit pass${geomVisible === 1 ? '' : 'es'} in 24 h, but too faint to see (mag > 6.5).`;
+    } else if (total > 0) {
+      msg = `${total} pass${total === 1 ? '' : 'es'} in 24 h, but none visible (daylight or Earth's shadow).`;
+    } else {
+      msg = 'No passes above 10° in the next 24 h.';
+    }
+    note.textContent = msg;
+  }
 }
 
 const VIS_STATE = {

@@ -1,5 +1,43 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-02 — Tier 4 built (visible-pass predictions)
+
+Adds "when's the next time I can see this?" — upcoming visible passes for the
+selected satellite from the observer's location.
+
+### What landed
+- `src/passes.js` — `predictPasses(satrec, observer, fromMs, stdMag, opts)`: walks
+  SGP4 forward (24 h, 30 s step) from **real wall-clock time** (independent of the
+  sim clock), reusing `computeVisibility`. Detects above-horizon passes, keeps the
+  ones that are sunlit + dark-sky, and (when a magnitude is known) bright enough
+  for the naked eye (mag ≤ 6.5). A cheap elevation probe runs while the object is
+  down; the full visibility calc only kicks in during a pass. **~2 ms per 24 h scan.**
+- `src/main.js` + `index.html` + CSS: a **Next visible passes** section in the
+  selection panel — up to 4 passes as local-time window + peak elevation/compass +
+  peak magnitude. Recomputes on selection and on location change. Falls back to a
+  reason line when nothing's visible ("6 passes in 24 h, but none visible
+  (daylight or Earth's shadow)"). Single-sample (culmination/shadow-edge) sightings
+  show a single time, not a degenerate range.
+
+### Bug fixed (shipped in PR #8, surfaced here)
+- **TDZ in observer persistence.** `let observer = loadObserver()` runs at boot but
+  `loadObserver()` reads `const OBSERVER_KEY`, which was declared ~700 lines later —
+  in the temporal dead zone. It threw, got swallowed by the try/catch, and returned
+  null, so a **persisted location was ignored on reload until re-saved**. Hoisted
+  the const above the boot call. (Same class as the earlier `enrichReqNorad` trap.)
+
+### Verified
+`predictPasses` timed at ~2 ms/24 h; happy path produces real passes (peak 81°
+NNE, mag 1.0; 19:07–19:09 max 13°, mag −1.5). Reload-with-persisted-location now
+shows visibility + passes on first selection without a re-save. Confirmed in-browser.
+
+### Notes / limits
+- 30 s scan resolution (rise/set to ±30 s — fine for a minute-level display); 24 h
+  horizon; naked-eye cutoff mag 6.5. SGP4 accuracy degrades for high-drag decaying
+  objects far ahead. No pass direction-of-travel arrow yet.
+
+
+
 ## 2026-08-01 — Tier 2/3 built (observer location + visibility + look direction)
 
 Adds "can I see it right now, and where do I look?" on top of the Tier 1

@@ -132,6 +132,13 @@
         <button id="vis-set-loc" class="wide-btn ghost">Set location…</button>
       </div>
 
+      <!-- Upcoming visible passes (needs a location; times in local timezone) -->
+      <div id="sel-passes" class="sel-passes hidden">
+        <span class="field-label">Next visible passes</span>
+        <ul id="passes-list" class="passes-list"></ul>
+        <p id="passes-note" class="passes-note subtle"></p>
+      </div>
+
       <!-- Reentry estimate (shown only for decaying objects in reentry mode) -->
       <div id="reentry-info" class="reentry-info hidden">
         <div class="reentry-status" id="re-status">—</div>
