@@ -332,9 +332,15 @@ function buildLayerToggles() {
     row.dataset.id = layer.id;
     row.innerHTML = `
       <input type="checkbox" ${layer.default ? 'checked' : ''} />
-      <span class="swatch" style="background:${layer.color};color:${layer.color}"></span>
+      <span class="swatch"></span>
       <span class="lname">${layer.label}</span>
       <span class="lcount" data-count>—</span>`;
+    // Set the swatch colour via CSSOM rather than an inline style attribute:
+    // the page's CSP uses `style-src 'self'`, which blocks `style="…"` in markup
+    // but permits DOM style assignment. `color` drives the currentColor glow.
+    const swatch = row.querySelector('.swatch');
+    swatch.style.background = layer.color;
+    swatch.style.color = layer.color;
     const input = row.querySelector('input');
     input.addEventListener('change', () => {
       row.classList.toggle('off', !input.checked);

@@ -7,7 +7,7 @@
 // Plus the happy path (index served) and unknown paths (404).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import http from 'node:http';
@@ -67,6 +67,24 @@ test('refuses dotfiles and VCS metadata (.git/config)', async () => {
   try {
     await withServer(root, async (port) => {
       const res = await rawGet(port, '/.git/config');
+      assert.equal(res.status, 403);
+      assert.notEqual(res.body, 'SECRET');
+    });
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('a symlink inside root that points outside root is refused', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'orbit-'));
+  const root = join(base, 'orbit');
+  await mkdir(root, { recursive: true });
+  await writeFile(join(base, 'outside.txt'), 'SECRET');
+  // A link that lives under the root but resolves to a file outside it.
+  await symlink(join(base, 'outside.txt'), join(root, 'link.txt'));
+  try {
+    await withServer(root, async (port) => {
+      const res = await rawGet(port, '/link.txt');
       assert.equal(res.status, 403);
       assert.notEqual(res.body, 'SECRET');
     });

@@ -32,8 +32,19 @@ and CI.
   - New `.github/workflows/codeql.yml` — CodeQL static analysis
     (`security-extended`) on push/PR + weekly cron.
 - `test/serve.test.mjs` — new tests locking in the server hardening: index
-  served, unknown → 404, `.git/config` → 403, sibling-prefix traversal → 403.
-  Suite now 19 tests, all passing.
+  served, unknown → 404, `.git/config` → 403, sibling-prefix traversal → 403,
+  symlink-escape → 403.
+- `test/csp.test.mjs` — recomputes the import-map sha256 and asserts it matches
+  the CSP allow-list, so the two can't silently drift apart.
+
+### Follow-ups from automated review
+- `serve.mjs` — reject `..`/NUL in the request path up front (also clears a
+  CodeQL `js/path-injection` alert on `readFile`), and canonicalise with
+  `realpath` so a symlink inside the root can't resolve to a file outside it.
+- `src/main.js` — the layer-swatch colour was set via an inline `style="…"`
+  attribute, which `style-src 'self'` blocks; now assigned via CSSOM
+  (`swatch.style.…`), which the CSP permits. Verified: no CSP violations.
+- Suite now 21 tests, all passing.
 
 ### Not changed (accepted)
 - The app still loads three.js / satellite.js from a CDN by design (no build
