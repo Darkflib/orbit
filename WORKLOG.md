@@ -1,5 +1,56 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-03 — Security review remediation
+
+Verified and fixed the findings from a security review of the app, dev server,
+and CI.
+
+### What landed
+- `serve.mjs` — hardened the local dev server:
+  - **Binds to loopback (`127.0.0.1`) by default** instead of all interfaces,
+    so the working tree (incl. `.git/`) is no longer exposed on the LAN. Opt in
+    to a wider bind with `HOST=0.0.0.0`.
+  - **Fixed path containment**: the old `startsWith(root)` check let a sibling
+    directory sharing the name prefix (`…/orbit-secret`) be reached by traversal.
+    Now requires an exact match or `root + separator`.
+  - **Refuses dotfiles / VCS metadata** (`.git/config`, `.env`, …) anywhere below
+    the root, checking only the path *below* root so a project cloned inside a
+    hidden parent still serves.
+  - Refactored to export `createOrbitServer(root)` (listens only when run
+    directly) so it's testable.
+- `index.html` — added a restrictive **Content-Security-Policy** meta tag:
+  `default-src 'self'`, scripts/images limited to `cdn.jsdelivr.net`, connections
+  to `celestrak.org`, `object-src 'none'`, `base-uri 'self'`. The inline import
+  map is allow-listed by sha256 hash. Verified in a real browser: app loads with
+  zero CSP violations.
+- CI hardening:
+  - **Pinned every GitHub Action to a full commit SHA** (tag kept in a trailing
+    comment) across `test.yml`, `static.yml`, `enrich.yml` — mutable tags can no
+    longer silently change what runs.
+  - `test.yml` — added `permissions: contents: read` (least privilege) and an
+    `npm audit --audit-level=high` dependency gate.
+  - New `.github/workflows/codeql.yml` — CodeQL static analysis
+    (`security-extended`) on push/PR + weekly cron.
+- `test/serve.test.mjs` — new tests locking in the server hardening: index
+  served, unknown → 404, `.git/config` → 403, sibling-prefix traversal → 403,
+  symlink-escape → 403.
+- `test/csp.test.mjs` — recomputes the import-map sha256 and asserts it matches
+  the CSP allow-list, so the two can't silently drift apart.
+
+### Follow-ups from automated review
+- `serve.mjs` — reject `..`/NUL in the request path up front (also clears a
+  CodeQL `js/path-injection` alert on `readFile`), and canonicalise with
+  `realpath` so a symlink inside the root can't resolve to a file outside it.
+- `src/main.js` — the layer-swatch colour was set via an inline `style="…"`
+  attribute, which `style-src 'self'` blocks; now assigned via CSSOM
+  (`swatch.style.…`), which the CSP permits. Verified: no CSP violations.
+- Suite now 21 tests, all passing.
+
+### Not changed (accepted)
+- The app still loads three.js / satellite.js from a CDN by design (no build
+  step); the CSP constrains *where* from and the import map pins exact versions.
+  Subresource-integrity on import-mapped modules isn't broadly supported yet.
+
 ## 2026-08-02 — Test harness for the physics
 
 Added unit tests for the visibility/pass/ephemeris math, on Node's built-in

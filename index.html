@@ -3,6 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    Content Security Policy. Locks scripts, styles, images, connections and
+    workers down to this origin plus the specific external hosts the app needs:
+      - script/img from cdn.jsdelivr.net  (three.js, satellite.js, Earth textures)
+      - connect to celestrak.org          (GP / decaying-object element fetches)
+    The inline import map is allow-listed by its sha256 hash — if you change the
+    import map you MUST recompute this hash (openssl / browser console) or the
+    map will be blocked. `object-src 'none'` and `base-uri 'self'` close off
+    plugin and <base>-hijacking vectors. (frame-ancestors is deliberately
+    omitted: it is ignored when delivered via <meta> and the app is hosted on
+    GitHub Pages, which cannot set response headers.)
+  -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    base-uri 'self';
+    object-src 'none';
+    script-src 'self' https://cdn.jsdelivr.net 'sha256-yPBdeAWAtgi2bccu7UWXHVk5XDQTT10wYTwQYNq6XAA=';
+    worker-src 'self';
+    connect-src 'self' https://celestrak.org;
+    img-src 'self' data: https://cdn.jsdelivr.net;
+    style-src 'self';
+    font-src 'self';
+  " />
   <title>Orbit — Real-time 3D Satellite Tracker</title>
   <meta name="description" content="Real-time 3D visualization of satellite trajectories using CelesTrak TLE data and satellite.js SGP4 propagation." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='30' fill='%230b1220'/%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%2338bdf8' stroke-width='4'/%3E%3Cellipse cx='50' cy='50' rx='46' ry='18' fill='none' stroke='%2338bdf8' stroke-width='3' transform='rotate(-30 50 50)'/%3E%3Ccircle cx='87' cy='34' r='6' fill='%23facc15'/%3E%3C/svg%3E" />

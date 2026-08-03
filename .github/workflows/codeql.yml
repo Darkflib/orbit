@@ -1,0 +1,37 @@
+# Static security analysis for the JavaScript sources (app + enrichment build +
+# dev server) via CodeQL. Runs on pushes and PRs to main, plus a weekly cron so
+# newly published queries catch regressions in code that isn't actively changing.
+#
+# Actions are pinned to full commit SHAs (tag in a trailing comment) so a moved
+# tag can't change what runs in CI.
+name: CodeQL
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: '23 4 * * 1'
+
+# Least privilege: read the code, write analysis results to the Security tab.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@e60ea984bd3baa95954f2856bcf24f9eaba46637 # v3.37.5
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@e60ea984bd3baa95954f2856bcf24f9eaba46637 # v3.37.5
