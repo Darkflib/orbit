@@ -1,6 +1,10 @@
 # Run the unit test suite (physics: visibility, passes, ephemeris) on every push
-# and pull request. Tests use Node's built-in runner; the only dependency is
-# satellite.js (dev-only — the app itself still loads it from a CDN import map).
+# and pull request, and audit dependencies. Tests use Node's built-in runner;
+# the only dependency is satellite.js (dev-only — the app itself still loads it
+# from a CDN import map).
+#
+# Actions are pinned to full commit SHAs (with the human-readable tag in a
+# trailing comment) so a moved tag can't silently change what runs in CI.
 name: Tests
 
 on:
@@ -8,18 +12,25 @@ on:
     branches: ["main"]
   pull_request:
 
+# Least privilege: the test job only needs to read the repository.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 20
           cache: npm
       - name: Install dev dependencies
         run: npm ci
+      - name: Audit dependencies
+        # Fail the build on a high/critical advisory in the dependency tree.
+        run: npm audit --audit-level=high
       - name: Run tests
         run: npm test
