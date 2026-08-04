@@ -608,6 +608,8 @@ body.mode-reentry #reentry-section { display: block; }
 .vis-visible { background: rgba(52, 211, 153, 0.18); color: #34d399; border-color: rgba(52, 211, 153, 0.35); }
 .vis-shadow  { background: rgba(129, 140, 248, 0.16); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.30); }
 .vis-day     { background: rgba(250, 204, 21, 0.16); color: #facc15; border-color: rgba(250, 204, 21, 0.30); }
+/* Twilight sits between "visible" green and "daylight" yellow, as does its hue. */
+.vis-twilight { background: rgba(251, 146, 60, 0.16); color: #fb923c; border-color: rgba(251, 146, 60, 0.30); }
 .vis-below   { background: rgba(148, 163, 184, 0.16); color: #94a3b8; border-color: rgba(148, 163, 184, 0.28); }
 
 /* ---------- Visible-pass predictions (selection panel) ---------- */

@@ -106,6 +106,36 @@ up with a fixed Earth texture. ECEF `(x, y, z)` km maps to the Y-up scene as
 lat/lon → position helper, so ground tracks and footprints sit exactly beneath
 their satellites.
 
+## Accuracy
+
+Pass predictions scan SGP4 on a fixed **30 s grid** over a 24 h horizon and
+report the sampled extremum, so every pass event is quantised to that step. Rise
+and set times are therefore good to about ±30 s, and the peak elevation is
+*understated* — by a fraction of a degree on a typical pass, but by up to ~9° on
+a fast, near-zenith LEO pass, where the elevation curve is at its sharpest. A
+missed culmination can also move the reported compass bearing by one point.
+
+The propagation and geometry underneath are not the limit. Checked against an
+independent implementation (Vallado SGP4 via Skyfield, JPL DE421 Sun, WGS84
+topocentric) on the same element set, and against Heavens-Above:
+
+| Quantity | Agreement |
+|---|---|
+| SGP4 position | 7.8 m |
+| Look angles, Sun altitude at the observer | 0.0015° |
+| Pass times and peak elevation vs Heavens-Above, same code at a 1 s step | ≤ 2 s, ≤ 0.2° |
+
+So the sampling step is the whole error budget; refining the horizon crossings
+and the culmination is a known follow-up. Full write-up, including the
+magnitude, twilight, and never-setting-object behaviour:
+[`docs/pass-validation-2026-08-04.md`](docs/pass-validation-2026-08-04.md).
+
+A pass is only listed when the Sun is more than 6° below the observer's horizon
+(the end of civil twilight), matching the convention Heavens-Above and N2YO use.
+Objects with no magnitude on record are listed only where a naked-eye sighting
+is physically plausible — roughly, within LEO range — rather than being assumed
+bright enough to see.
+
 ## Data & attribution
 
 - Orbital elements: [CelesTrak](https://celestrak.org/) (Dr. T.S. Kelso).

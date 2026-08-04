@@ -1,5 +1,121 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-04 — Pass-prediction validation & fixes
+
+Validated `src/passes.js` / `src/visibility.js` against an independent
+Skyfield/DE421/Vallado-SGP4 reference and against Heavens-Above, then fixed the
+three behavioural issues the exercise turned up. Full write-up, with the
+reproduction scripts, in `docs/pass-validation-2026-08-04.md`.
+
+The physics came out clean — every disagreement traces to the 30 s scan step or
+to a reporting convention, not to the maths.
+
+### What landed
+- **README — an `Accuracy` section.** States plainly that passes are scanned on
+  a fixed 30 s grid, what that costs (±30 s on rise/set, peak elevation
+  understated by up to ~9° on fast near-zenith LEO passes, sometimes one compass
+  point), and what is *not* the cause — the propagation and geometry reproduce an
+  independent implementation and Heavens-Above to ~1 s and ~0.2° when the same
+  code runs at a 1 s step.
+- **`src/visibility.js` — the −6° twilight boundary is now actually used.** `sky`
+  was computed with a civil-twilight boundary and then ignored: `state` only
+  became `daylight` above the *geometric* horizon, so Orbit listed passes with
+  the Sun at −0.0°, which no other tracker does. Civil twilight is now its own
+  `state` (`twilight`), exported boundary `CIVIL_TWILIGHT_DEG`, and
+  `predictPasses` requires `visible`.
+  - The live "can I see it right now" badge changed with it, deliberately: it
+    now reads *Twilight — only bright objects* instead of *Visible now*. Leaving
+    the badge on the old boundary would have had the panel promise a sighting the
+    pass list underneath it refuses to offer. One threshold, one story.
+- **`src/visibility.js` — `magOffset` is returned unconditionally.** The range +
+  phase terms are geometry and are known even when the intrinsic magnitude is
+  not; `apparentMag` is now literally `stdMag + magOffset`. This is what lets the
+  pass filter reason about an object with no magnitude without duplicating the
+  photometry.
+- **`src/passes.js` — a null magnitude no longer means "bright enough".** It now
+  bounds the object instead: assume `UNKNOWN_STD_MAG = 2.0` (the bright end of
+  the mmccants catalogue — a large spent rocket body) and ask whether even *that*
+  would clear the naked-eye cutoff at this range and phase. It is a bound, not a
+  guess, and it is deliberately optimistic so missing data never costs a real
+  LEO sighting. `unknownBrightness` is returned so the UI can say why.
+- **`src/passes.js` — never-setting objects are no longer one 24 h "pass".** An
+  object that holds above the elevation gate for the whole scan now returns
+  `alwaysUp` plus a `standing` summary (representative look angles, how long it
+  is sunlit in a dark sky, brightest magnitude) instead of `total: 1` with a
+  meaningless `peakTime`. Only claimed over a scan of ≥ 12 h, past the ~8 h an
+  MEO object can hold above 10°, so a short scan degrades to a clipped pass
+  rather than asserting something it didn't watch long enough to know.
+- **`src/passes.js` — scan boundaries are no longer reported as rise/set times.**
+  Windows carry `startClipped` / `endClipped`; the UI renders those as
+  "Now – 22:14" and "21:50 onwards" rather than inventing an AOS/LOS.
+- **`src/passes.js` — `satellite.propagate` is wrapped.** It throws on some
+  deep-decay element sets rather than returning a falsy position; one bad sample
+  now closes the open pass and the scan continues instead of taking out the whole
+  prediction.
+- **`src/main.js` — `renderPasses` takes the result object** and covers the new
+  cases: the standing summary, and a third empty-list reason. It previously
+  branched on `geomVisible > 0 && haveMag` and would have said "too faint to see
+  (mag > 6.5)" for an object whose magnitude it never had. It now distinguishes
+  *too faint* (measured), *brightness unknown and too distant* (bounded), and
+  *no sunlit passes at all*. Unknown-state badges fall back rather than throw.
+- `styles/main.css` — a `vis-twilight` badge colour, sitting between the
+  "visible" green and the "daylight" yellow, as does its hue.
+
+### Verified
+- **Layer by layer** (440 samples, 11 objects), Orbit vs the independent
+  reference: SGP4 position **7.8 m**, velocity 8.8 mm/s, look-angle elevation
+  **0.0015°**, azimuth 0.0029°, slant range 29 m, Sun altitude at the observer
+  **0.0015°**. GMST differs by a constant 1.20 arcsec, which is DUT1 (`gstime`
+  treats UTC as UT1) and ignorable.
+- **End to end**, 51 objects: pass counts identical. AOS ≤ 29.8 s, LOS ≤ 29.0 s,
+  peak time ≤ 14.4 s, peak magnitude ≤ 0.03 — all inside one 30 s step, the
+  signature of quantisation. Peak elevation ≤ **8.97°**, the one bound that is
+  not (STARLINK-34970 reported 81°, true culmination 89.7°).
+- **Heavens-Above, ISS, four passes**, same site and element set: HA reports four
+  daylight passes and zero visible; Orbit reports exactly that. At `stepSec: 1`
+  Orbit reproduces HA to +1…+2 s and 0.2°, with all four compass bearings
+  matching; at the shipped 30 s the 71° pass reads 68° and 2 of 4 bearings flip.
+- **Twilight gate**, ISS at mag −1.8 over a 45-observer grid: 140 → **116**
+  windows (−17%) and 436 → 340 minutes of listed window time (−22%). That is the
+  bright-twilight listing other trackers don't show, now gone.
+- **Unknown-magnitude bound** costs nothing in LEO: same ISS grid, unknown
+  magnitude, **116 windows before and after**; only the faint edges are trimmed
+  (339.5 → 288.0 minutes). Beyond ~7900 km slant range it bites, which is where
+  it is meant to: a synthetic GPS-like MEO from Kegworth still reports 2 sunlit
+  passes but claims **0** naked-eye ones — and so does the same object given a
+  genuine stdMag of 2.0, so the bound is not merely pessimism.
+- **Never-setting**: a synthetic geostationary object overhead now returns
+  `alwaysUp` with 11.2 h sunlit in a dark sky, rather than "1 pass". Even at an
+  implausible stdMag of 1.0 it works out at apparent mag 8.8 — nothing at
+  36 000 km is a naked-eye object, which is the whole point.
+- Suite now **28 tests**, all passing (was 21). Seven new: the twilight state and
+  its boundary, `magOffset` consistency, the LEO no-loss guarantee, MEO
+  suppression, the standing summary, the ≥ 12 h guard, and clipped windows.
+
+### Follow-ups
+- **Refine event times and the culmination — the deferred fix.** The 30 s step
+  is the entire remaining error budget: ±30 s on the window edges and up to
+  **8.97°** understated at the peak (STARLINK-34970: 81° reported for an 89.7°
+  overhead pass, rendered as a wrong integer next to a compass bearing that is
+  also wrong on half the ISS passes checked). The fix is bisection on the two
+  10°-crossing samples and golden-section (or a parabola through the three
+  samples around the maximum) on the culmination — roughly **4 extra SGP4
+  evaluations per pass**, which collapses AOS/LOS to ~±1 s and the peak to well
+  under 0.1°. Left out here deliberately: it changes every reported number, so it
+  wants its own change and its own comparison against Heavens-Above.
+- `UNKNOWN_STD_MAG` is one global constant. If enrichment ever carries an RCS or
+  a size class, a per-object bound would be sharper than "as bright as a rocket
+  body" — but only that: a bound, never a reported magnitude.
+- The Earth-shadow model stays cylindrical against a spherical Earth. The
+  reference uses a conical umbra/penumbra against WGS84 and the pass counts
+  agreed anyway, so this only matters for grading brightness through the
+  penumbra, which the app doesn't do.
+- `standing.darkMs` is quantised to the scan step (one step per qualifying
+  sample), so it is a ±30 s figure reported to 0.1 h. Fine for "best seen when
+  dark"; it would need the same refinement as above to be better.
+- `gstime` treating UTC as UT1 costs 1.20 arcsec of Earth rotation (~37 m).
+  Measured, accepted, not worth a DUT1 feed.
+
 ## 2026-08-03 — Security review remediation
 
 Verified and fixed the findings from a security review of the app, dev server,

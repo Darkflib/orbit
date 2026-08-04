@@ -883,8 +883,8 @@ function updatePasses() {
   if (!satrec) { box.classList.add('hidden'); return; }
   const stdMag = selectedEnrichment && selectedEnrichment.stdMag != null ? selectedEnrichment.stdMag : null;
   const est = !!(selectedEnrichment && selectedEnrichment.magSource === 'estimate');
-  const { passes, total, geomVisible } = predictPasses(satrec, observer, Date.now(), stdMag, { hours: 24 });
-  renderPasses(passes, total, geomVisible, est, stdMag != null);
+  const result = predictPasses(satrec, observer, Date.now(), stdMag, { hours: 24 });
+  renderPasses(result, est, stdMag != null);
   box.classList.remove('hidden');
 }
 
@@ -902,35 +902,77 @@ function dayPrefix(d) {
 }
 const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-function renderPasses(passes, total, geomVisible, est, haveMag) {
+// When a window's label is a real rise/set time, show the range. When it ran
+// into a scan boundary, say so instead: the scan starts at "now", so a
+// start-clipped window means the object is up and lit right now, and an
+// end-clipped one continues past the 24 h horizon. Printing the boundary as an
+// AOS/LOS would invent an event that never happened.
+function passWhen(p) {
+  // Clipped at both ends means the window covered every sample scanned, so the
+  // only truthful statement is that it never ended within the horizon.
+  if (p.startClipped && p.endClipped) return 'Now, and throughout the next 24 h';
+  if (p.startClipped) return `Now – ${hhmm(p.visibleEnd)}`;
+  const from = `${dayPrefix(new Date(p.visibleStart))}${hhmm(p.visibleStart)}`;
+  if (p.endClipped) return `${from} onwards`;
+  // A single-sample window (start === end) is a brief culmination/shadow-edge
+  // sighting — show the one time rather than a "21:14–21:14" range. A genuine
+  // two-sample (30 s) window keeps its range.
+  if (p.visibleEnd === p.visibleStart) return `${dayPrefix(new Date(p.peakTime))}${hhmm(p.peakTime)}`;
+  return `${from}–${hhmm(p.visibleEnd)}`;
+}
+
+// A permanently-above-the-horizon object (every GEO, some MEO/HEO) has no
+// passes to list — only a fixed place in the sky and a question of whether it is
+// ever lit against a dark sky. Say that, rather than dressing it up as a pass.
+function standingNote(st, est) {
+  const where = `${st.elevation.toFixed(0)}° ${compass(st.azimuth)}`;
+  const head = `Always above the horizon, at ${where}`;
+  if (!(st.darkMs > 0)) return `${head}. Never sunlit in a dark sky in the next 24 h.`;
+  const hrs = (st.darkMs / 3600e3).toFixed(1);
+  const lit = `${head} · sunlit in a dark sky for ${hrs} h in the next 24 h`;
+  if (st.brightestMag != null) {
+    return st.nakedEye
+      ? `${lit}, at mag ${st.brightestMag.toFixed(1)}${est ? ' (est.)' : ''}.`
+      : `${lit}, but too faint to see (mag ${st.brightestMag.toFixed(1)}${est ? ' est.' : ''}).`;
+  }
+  return st.nakedEye
+    ? `${lit}. Brightness unknown.`
+    : `${lit}, but too distant for a naked-eye sighting (no magnitude on record).`;
+}
+
+function renderPasses({ passes, total, geomVisible, unknownBrightness, alwaysUp, standing }, est, haveMag) {
   const list = $('passes-list');
   const note = $('passes-note');
   list.innerHTML = '';
+  if (alwaysUp && standing) {
+    note.textContent = standingNote(standing, est);
+    return;
+  }
   if (passes.length) {
     for (const p of passes) {
       const li = document.createElement('li');
       li.className = 'pass-row';
-      // A single-sample window (start === end) is a brief culmination/shadow-edge
-      // sighting — show the one time rather than a "21:14–21:14" range. A genuine
-      // two-sample (30 s) window keeps its range.
-      const when = p.visibleEnd === p.visibleStart
-        ? `${dayPrefix(new Date(p.peakTime))}${hhmm(p.peakTime)}`
-        : `${dayPrefix(new Date(p.visibleStart))}${hhmm(p.visibleStart)}–${hhmm(p.visibleEnd)}`;
       const mag = p.peakMag != null
         ? ` · mag ${p.peakMag.toFixed(1)}${est ? ' (est.)' : ''}`
         : '';
       li.innerHTML =
-        `<span class="pass-when">${escapeHtml(when)}</span>` +
+        `<span class="pass-when">${escapeHtml(passWhen(p))}</span>` +
         `<span class="pass-meta">max ${p.peakElevation.toFixed(0)}° ${compass(p.peakAzimuth)}${mag}</span>`;
       list.appendChild(li);
     }
     note.textContent = 'Times in your local timezone · next 24 h.';
   } else {
     let msg;
-    if (geomVisible > 0 && haveMag) {
-      msg = `${geomVisible} sunlit pass${geomVisible === 1 ? '' : 'es'} in 24 h, but too faint to see (mag > 6.5).`;
+    if (geomVisible > 0) {
+      const n = `${geomVisible} sunlit pass${geomVisible === 1 ? '' : 'es'} in 24 h`;
+      // Three distinct reasons, and only the first is a statement about a
+      // magnitude we actually have. Claiming "too faint (mag > 6.5)" for an
+      // object with no magnitude on record would be inventing the measurement.
+      if (haveMag) msg = `${n}, but too faint to see (mag > 6.5).`;
+      else if (unknownBrightness) msg = `${n}, but brightness unknown and too distant for a naked-eye sighting.`;
+      else msg = `${n}, brightness unknown.`;
     } else if (total > 0) {
-      msg = `${total} pass${total === 1 ? '' : 'es'} in 24 h, but none visible (daylight or Earth's shadow).`;
+      msg = `${total} pass${total === 1 ? '' : 'es'} in 24 h, but none visible (daylight, twilight, or Earth's shadow).`;
     } else {
       msg = 'No passes above 10° in the next 24 h.';
     }
@@ -942,8 +984,13 @@ const VIS_STATE = {
   visible: { label: 'Visible now', cls: 'vis-visible' },
   shadow: { label: "In Earth's shadow", cls: 'vis-shadow' },
   daylight: { label: 'Daylight — too bright', cls: 'vis-day' },
+  // Civil twilight: sunlit and up, but the sky is still bright enough that only
+  // the brightest objects show. The pass list won't offer these windows, so the
+  // badge shouldn't promise them either.
+  twilight: { label: 'Twilight — only bright objects', cls: 'vis-twilight' },
   'below-horizon': { label: 'Below the horizon', cls: 'vis-below' },
 };
+const VIS_UNKNOWN = { label: 'Unknown', cls: 'vis-below' };
 
 // Compute and render observer-relative visibility for the selected satellite.
 function updateVisibility(sel, date) {
@@ -953,7 +1000,9 @@ function updateVisibility(sel, date) {
   const est = selectedEnrichment && selectedEnrichment.magSource === 'estimate';
   const v = computeVisibility(sel.eci, sel.gmst, observer, sun, stdMag);
 
-  const s = VIS_STATE[v.state];
+  // Fall back rather than throw if computeVisibility ever gains a state the UI
+  // doesn't know about — a missing badge shouldn't take the whole panel down.
+  const s = VIS_STATE[v.state] || VIS_UNKNOWN;
   const badge = $('vis-state');
   badge.textContent = s.label;
   badge.className = `badge ${s.cls}`;
