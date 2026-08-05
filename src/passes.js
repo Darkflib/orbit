@@ -14,11 +14,14 @@
 // Accuracy note: the scan samples on a fixed grid, but the reported window edges
 // and culmination are then refined off it (bisection on window membership, a
 // golden-section search for the peak) so they no longer carry the step's
-// quantisation — the edges land ~sub-second and the peak well under 0.1° at the
-// default 30 s.
-// See docs/pass-validation-2026-08-04.md for the underlying validation: the
-// propagation and geometry reproduce an independent implementation to metres and
-// thousandths of a degree, so the refined events are as good as the physics.
+// quantisation. Against an independent reference the peak lands at the geometry
+// floor (~0.002°) and gate- or magnitude-bounded edges within ~0.1 s. A
+// shadow-bounded edge is the exception: it lands ~2 s out, because the sunlit
+// test models Earth's shadow as a cylinder on a spherical Earth while the true
+// umbra is a cone on the ellipsoid — a modelling difference, not a sampling one,
+// and now the largest error in the pipeline (invisible at the hh:mm the UI
+// renders). See docs/pass-validation-2026-08-04.md and
+// docs/pass-refinement-validation-2026-08-05.md.
 // ---------------------------------------------------------------------------
 import * as satellite from 'satellite.js';
 import { DEG2RAD, RAD2DEG } from './constants.js';

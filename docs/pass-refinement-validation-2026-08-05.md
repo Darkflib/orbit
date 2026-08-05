@@ -190,7 +190,7 @@ test.
 `ref_passes2.py` (policy-matched reference) and `compare2.py` (diff), with the
 OMM snapshots and both output sets, are in the session output folder.
 
-```
+```sh
 node orbit_run.mjs    selection.json omm.json 2026-08-04T22:00:00Z orbit_ref.json
 python3 ref_passes2.py selection.json omm.json 2026-08-04T22:00:00Z ref2_out.json
 python3 compare2.py    orbit_ref.json ref2_out.json
