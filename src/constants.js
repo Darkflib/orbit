@@ -15,6 +15,12 @@ export const RAD2DEG = 180 / Math.PI;
 export const GP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const GP_CACHE_PREFIX = 'orbit.gp.';
 
+// Per-fetch network timeout. Without it a single stalled CelesTrak group holds
+// the `Promise.allSettled` in `fetchLayers` open indefinitely and the app sits
+// on the loading screen. On timeout the request is aborted and falls back to a
+// stale cache when one exists (otherwise it surfaces as a normal fetch error).
+export const GP_FETCH_TIMEOUT_MS = 15 * 1000; // 15 seconds
+
 // The decaying set changes far faster than the general catalog (perigee drops
 // by tens of km per day near reentry), so it is refetched more aggressively.
 export const REENTRY_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes

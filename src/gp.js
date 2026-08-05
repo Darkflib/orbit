@@ -13,8 +13,30 @@
 // ---------------------------------------------------------------------------
 import {
   CELESTRAK_URL, CELESTRAK_SPECIAL_URL, GP_CACHE_PREFIX, GP_MAX_AGE_MS,
-  REENTRY_LAYER, REENTRY_MAX_AGE_MS,
+  GP_FETCH_TIMEOUT_MS, REENTRY_LAYER, REENTRY_MAX_AGE_MS,
 } from './constants.js';
+
+// fetch() + JSON parse under a single hard timeout. A stalled request aborts
+// after `timeoutMs` instead of hanging forever; the abort surfaces as a
+// rejection, which the callers below turn into a stale-cache fallback or a
+// normal fetch error.
+//
+// The deadline deliberately spans the body read as well as the headers: fetch()
+// resolves as soon as the response headers arrive, so a server that then stalls
+// or trickles the JSON body would slip past a timeout that only guarded the
+// headers. Keeping the timer armed until `res.json()` settles (it is cleared in
+// `finally`, after the parse) means a stalled body is aborted too.
+async function fetchJsonWithTimeout(url, opts, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // The OMM fields we keep. This is exactly what `json2satrec` needs plus the
 // name and international designator for display. Verified sufficient: a satrec
@@ -84,7 +106,7 @@ function writeCache(group, records) {
 // Shared fetch-and-cache core. `cacheName` keys the localStorage entry, `url`
 // is the CelesTrak endpoint and `maxAge` how long a cache entry stays fresh.
 // Returns { records, fetchedAt, fromCache, stale? }.
-async function fetchElements(cacheName, url, maxAge, force) {
+async function fetchElements(cacheName, url, maxAge, force, timeoutMs = GP_FETCH_TIMEOUT_MS) {
   const cached = readCache(cacheName);
   const fresh = cached && Date.now() - cached.fetchedAt < maxAge;
 
@@ -93,15 +115,14 @@ async function fetchElements(cacheName, url, maxAge, force) {
   }
 
   try {
-    const res = await fetch(url, { mode: 'cors' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await fetchJsonWithTimeout(url, { mode: 'cors' }, timeoutMs);
     if (!Array.isArray(data) || data.length === 0) throw new Error('no elements returned');
     const records = data.map(ommToRecord);
     writeCache(cacheName, records);
     return { records, fetchedAt: Date.now(), fromCache: false };
   } catch (err) {
-    // Network/CORS/parse failure — fall back to a stale cache if we have one.
+    // Network/CORS/parse failure, or a timeout abort — fall back to a stale
+    // cache if we have one.
     if (cached) {
       return { records: cached.records, fetchedAt: cached.fetchedAt, fromCache: true, stale: true };
     }
@@ -111,19 +132,20 @@ async function fetchElements(cacheName, url, maxAge, force) {
 
 // Fetch one CelesTrak group, using the cache when it is still fresh.
 // Returns { records, fetchedAt, fromCache }.
-export async function fetchGroup(group, { force = false } = {}) {
-  return fetchElements(group, CELESTRAK_URL(group), GP_MAX_AGE_MS, force);
+export async function fetchGroup(group, { force = false, timeoutMs } = {}) {
+  return fetchElements(group, CELESTRAK_URL(group), GP_MAX_AGE_MS, force, timeoutMs);
 }
 
 // Fetch CelesTrak's decaying-objects watch list (SPECIAL=DECAYING). Records are
 // tagged with the reentry layer so the shared satellite field colours them as
 // reentry candidates. Uses a separate, shorter-lived cache than group data.
-export async function fetchDecaying({ force = false } = {}) {
+export async function fetchDecaying({ force = false, timeoutMs } = {}) {
   const r = await fetchElements(
     'special.decaying',
     CELESTRAK_SPECIAL_URL(REENTRY_LAYER.special),
     REENTRY_MAX_AGE_MS,
     force,
+    timeoutMs,
   );
   return { ...r, records: r.records.map((rec) => ({ ...rec, layerId: REENTRY_LAYER.id })) };
 }
