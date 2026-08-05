@@ -1,5 +1,46 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-05 — Deploy race: `static.yml` was overwriting fresh enrichment data
+
+`static.yml` uploads the whole tree (`path: '.'`) on every push to `main`, and
+`enrich.yml` never commits its freshly built `data/` back to `main` — it deploys
+it and publishes a copy to the orphan `enrichment-data` branch. The committed
+`data/` was therefore a permanently stale seed, and *any* code or docs push
+re-deployed it over the live site, rolling the catalogue back until the next
+daily enrich run.
+
+The shared `concurrency: pages` group made the two deploys serialise, which is
+why this looked handled. Ordering was never the problem: whenever `static.yml`
+ran it shipped stale data, regardless of when it ran relative to enrich.
+
+### What landed
+- **`static.yml` overlays `data/` from `enrichment-data` before uploading**, so a
+  code-only deploy carries the newest published catalogue instead of the seed. It
+  falls back to the committed seed when the branch is absent or carries no
+  `data/manifest.json`, and only drops the seed once the replacement tree is
+  confirmed present — a first deploy or a broken branch still ships working data
+  rather than none.
+- **`enrich.yml` no longer reports a failed push as "no enrichment change".** The
+  old `commit && push || echo` swallowed push failures as a clean no-op. That was
+  tolerable when the branch was just a history log; now that it feeds static
+  deploys, the step tests the staged diff so a genuine no-op and a failed push are
+  distinguishable in the log. It stays `continue-on-error` — getting fresh data
+  onto the site matters more than recording it, and the next run repairs the branch.
+- **`sync-data-seed.yml` (new) fast-forwards the committed seed monthly** from
+  `enrichment-data`. The seed still matters for local dev (`node serve.mjs` on a
+  fresh clone) and as `static.yml`'s fallback, so letting it drift forever was the
+  remaining weakness. It refuses to move the seed backwards (ISO-timestamp compare,
+  so a rolled-back or force-pushed branch can't regress `main`), commits with
+  `[skip ci]` because the site already serves exactly those bytes, and rebases
+  rather than forces if a push lands on `main` mid-run.
+
+### Why monthly is affordable
+`write.mjs` emits `data/` deterministically — sorted keys and records, no per-run
+timestamp outside `manifest.json` — so consecutive snapshots delta well. Measured
+on the real tree: a history carrying two complete 26 MB `data/` trees packs to
+~2.5 MB, and adding a snapshot moved the pack by less than repack noise. Daily
+commits would still be needless churn on `main`; monthly bounds the drift without it.
+
 ## 2026-08-05 — Pass event-time & culmination refinement (worklog follow-up)
 
 The deferred fix from 2026-08-04: the 30 s scan step was the whole remaining

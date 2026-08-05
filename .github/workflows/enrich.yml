@@ -10,7 +10,8 @@
 # The freshly built data/ is pushed to an orphan `enrichment-data` branch, which
 # is the source of truth for published data: static.yml overlays it at deploy
 # time so a code-only push to main can't roll the live site back to the stale
-# data/ committed in the repo (that copy is only a first-deploy seed). The push
+# data/ committed in the repo (that copy is a seed for local dev and static.yml's
+# fallback; sync-data-seed.yml fast-forwards it monthly). The push
 # stays non-blocking — shipping fresh data to the site matters more than
 # recording it — but a failure now means the next static.yml deploy serves the
 # previous run's data until the next enrich run repairs it, so it is logged

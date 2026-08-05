@@ -6,7 +6,9 @@
 # the whole tree (path: '.'), deploying the committed seed would clobber the live
 # site with stale data on every code push. To prevent that, we overlay the
 # latest data/ from the enrichment-data branch before uploading, falling back to
-# the committed seed only when that branch doesn't exist yet (first deploy).
+# the committed seed only when that branch doesn't exist yet (first deploy) or
+# has no usable data/. sync-data-seed.yml refreshes that seed monthly, so the
+# fallback is at worst a month behind rather than unboundedly stale.
 name: Deploy static content to Pages
 
 on:
