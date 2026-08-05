@@ -18,6 +18,9 @@ GPS/GNSS, OneWeb, geostationary birds, and the ISS all sit in their real orbits.
 Click any satellite to see its live position, orbit path, ground track, and
 coverage footprint.
 
+> **New to orbital jargon?** Terms like GP, OMM, SGP4, ephemeris, AOS/LOS, and
+> footprint are explained in the [Glossary](docs/GLOSSARY.md).
+
 ## Highlights
 
 - **No backend, no API key, no rate limits.** All data comes from CelesTrak's
