@@ -11,12 +11,17 @@
 // the time) only a lightweight elevation probe runs; the full visibility
 // computation only kicks in once the object is actually up.
 //
-// Accuracy note: event times and the reported peak are quantised to the scan
-// step. At the default 30 s that costs ±30 s on the window edges and up to ~9°
-// on the culmination of a fast near-zenith LEO pass. See
-// docs/pass-validation-2026-08-04.md — the propagation and geometry underneath
-// validate to metres and thousandths of a degree; the step is the whole error
-// budget. Refining the edges and the peak is a deliberate follow-up.
+// Accuracy note: the scan samples on a fixed grid, but the reported window edges
+// and culmination are then refined off it (bisection on window membership, a
+// golden-section search for the peak) so they no longer carry the step's
+// quantisation. Against an independent reference the peak lands at the geometry
+// floor (~0.002°) and gate- or magnitude-bounded edges within ~0.1 s. A
+// shadow-bounded edge is the exception: it lands ~2 s out, because the sunlit
+// test models Earth's shadow as a cylinder on a spherical Earth while the true
+// umbra is a cone on the ellipsoid — a modelling difference, not a sampling one,
+// and now the largest error in the pipeline (invisible at the hh:mm the UI
+// renders). See docs/pass-validation-2026-08-04.md and
+// docs/pass-refinement-validation-2026-08-05.md.
 // ---------------------------------------------------------------------------
 import * as satellite from 'satellite.js';
 import { DEG2RAD, RAD2DEG } from './constants.js';
@@ -75,6 +80,96 @@ export function predictPasses(satrec, observer, fromMs, stdMag, {
   // looking" — only the first is a real LOS.
   const lastGridMs = fromMs + Math.floor((endMs - fromMs) / stepMs) * stepMs;
 
+  // --- Sub-step refinement --------------------------------------------------
+  // The scan samples on a fixed grid, so a window edge lands within one step of
+  // the true transition and the reported culmination can read up to ~9° low on a
+  // fast near-zenith pass (a 550 km object sweeps ~0.8°/s through the zenith, so
+  // a 30 s grid can miss the peak by 15 s where the elevation curve is sharpest).
+  // Both are recovered here with a handful of extra SGP4 evaluations per emitted
+  // pass — bisection on the window-membership predicate for the edges, a
+  // golden-section search for the peak — which collapses the edges to ~sub-second
+  // and the peak to well under 0.1°. Only emitted passes (≤ maxPasses) are
+  // refined, so the cost stays bounded.
+  const REFINE_TOL_MS = 200;   // stop once the bracket is this tight
+  const REFINE_MAX_ITERS = 24; // hard cap (one 30 s step -> well under the tol)
+  const GOLDEN = (Math.sqrt(5) - 1) / 2;
+
+  // Elevation (deg) at an arbitrary instant — the cheap probe, no sun/shadow.
+  const elevationAt = (t) => {
+    const date = new Date(t);
+    let pv;
+    try { pv = satellite.propagate(satrec, date); } catch { return null; }
+    if (!pv || !pv.position) return null;
+    const satEcf = satellite.eciToEcf(pv.position, satellite.gstime(date));
+    return satellite.ecfToLookAngles(observerGd, satEcf).elevation * RAD2DEG;
+  };
+
+  // Full visibility at an arbitrary instant — used to read off the look angles
+  // (and magnitude) at a refined culmination time, and to test window membership.
+  const visibilityAt = (t) => {
+    const date = new Date(t);
+    let pv;
+    try { pv = satellite.propagate(satrec, date); } catch { return null; }
+    if (!pv || !pv.position) return null;
+    return computeVisibility(pv.position, satellite.gstime(date), observer, sunDirectionEci(date), stdMag);
+  };
+
+  // Is `t` inside a visible window? The same conjunction the scan uses to build a
+  // run — above the gate, sunlit, dark sky, bright enough — so bisecting it finds
+  // whichever transition actually bounds the window: the 10° gate on a pass that
+  // rises and sets in darkness, or the shadow / twilight / brightness edge on one
+  // that doesn't. Pure (no unknownBrightness side effect): refinement only
+  // locates the boundary of a window the scan already decided to emit.
+  const inWindow = (t) => {
+    const v = visibilityAt(t);
+    if (!v) return null;
+    return v.elevation >= minElevationDeg && v.state === 'visible' && isBright(v);
+  };
+
+  // Bisect a window edge between a grid instant outside the window and one inside
+  // it. Returns a time on the inside of the transition, so the reported edge
+  // never claims visibility the object doesn't yet (or no longer) has. Null if a
+  // probe failed to propagate, so the caller keeps the grid value.
+  const refineEdge = (tOut, tIn) => {
+    let out = tOut;
+    let ins = tIn;
+    for (let i = 0; i < REFINE_MAX_ITERS && Math.abs(ins - out) > REFINE_TOL_MS; i++) {
+      const mid = (out + ins) / 2;
+      const m = inWindow(mid);
+      if (m == null) return null;
+      if (m) ins = mid; else out = mid;
+    }
+    return ins;
+  };
+
+  // Golden-section search for the elevation maximum in [tA, tB]. The elevation
+  // curve near the zenith is far too sharp to read off a parabola through 30 s
+  // samples (it leaves ~1-2° on an overhead pass), so the peak is found by direct
+  // maximisation instead. Returns the peak time, or null on a propagation failure.
+  const goldenPeakTime = (tA, tB) => {
+    let a = tA;
+    let b = tB;
+    let c = b - GOLDEN * (b - a);
+    let d = a + GOLDEN * (b - a);
+    let fc = elevationAt(c);
+    let fd = elevationAt(d);
+    if (fc == null || fd == null) return null;
+    for (let i = 0; i < REFINE_MAX_ITERS && b - a > REFINE_TOL_MS; i++) {
+      if (fc > fd) {
+        b = d; d = c; fd = fc;
+        c = b - GOLDEN * (b - a);
+        fc = elevationAt(c);
+        if (fc == null) return null;
+      } else {
+        a = c; c = d; fc = fd;
+        d = a + GOLDEN * (b - a);
+        fd = elevationAt(d);
+        if (fd == null) return null;
+      }
+    }
+    return (a + b) / 2;
+  };
+
   const passes = [];
   let total = 0;
   let geomVisible = 0;
@@ -88,15 +183,23 @@ export function predictPasses(satrec, observer, fromMs, stdMag, {
   // a genuine (if clipped) pass.
   let everDown = false;
 
-  // Brightness gate for one sample. A measured magnitude is a straight
-  // comparison; without one we fall back to the optimistic bound above, and
-  // remember that we did so, so the UI can say "brightness unknown" rather than
-  // quoting a cutoff it never actually tested the object against.
+  // Pure brightness test for one sample: a measured magnitude is a straight
+  // comparison; without one we fall back to the optimistic bound (see
+  // UNKNOWN_STD_MAG). No side effects, so the refinement helpers can reuse it.
+  const isBright = (v) => (
+    v.apparentMag != null
+      ? v.apparentMag <= maxMag
+      : unknownStdMag + v.magOffset <= maxMag
+  );
+
+  // The scan's brightness gate wraps isBright and additionally remembers when an
+  // unknown-magnitude sample was dropped only because it failed the bound, so the
+  // UI can say "brightness unknown" rather than quoting a cutoff it never actually
+  // tested the object against.
   const brightEnough = (v) => {
-    if (v.apparentMag != null) return v.apparentMag <= maxMag;
-    if (unknownStdMag + v.magOffset <= maxMag) return true;
-    unknownBrightness = true;
-    return false;
+    const ok = isBright(v);
+    if (!ok && v.apparentMag == null) unknownBrightness = true;
+    return ok;
   };
 
   const finalize = () => {
@@ -113,24 +216,69 @@ export function predictPasses(satrec, observer, fromMs, stdMag, {
       let run = [];
       const flush = () => {
         if (run.length && passes.length < maxPasses) {
+          // Grid-sampled peak and brightest sample; both are then refined below.
           let peak = run[0];
           let bright = null;
           for (const s of run) {
             if (s.v.elevation > peak.v.elevation) peak = s;
             if (s.v.apparentMag != null && (bright === null || s.v.apparentMag < bright.v.apparentMag)) bright = s;
           }
+
+          const startClipped = run[0].t <= fromMs;
+          const endClipped = run[run.length - 1].t >= lastGridMs;
+
+          let visibleStart = run[0].t;
+          let visibleEnd = run[run.length - 1].t;
+          let peakTime = peak.t;
+          let peakElevation = peak.v.elevation;
+          let peakAzimuth = peak.v.azimuth;
+
+          // Refine the window edges first, by bisecting window-membership across
+          // the grid step that straddles each transition. inWindow captures
+          // whatever bounds the window — the 10° gate, or a shadow / twilight /
+          // brightness edge — so this handles both without special-casing. A
+          // clipped edge is a scan boundary rather than a transition, so it is
+          // left as the reported boundary and not refined.
+          if (!startClipped) {
+            const e = refineEdge(run[0].t - stepMs, run[0].t);
+            if (e != null) visibleStart = e;
+          }
+          if (!endClipped) {
+            const e = refineEdge(run[run.length - 1].t + stepMs, run[run.length - 1].t);
+            if (e != null) visibleEnd = e;
+          }
+
+          // Then refine the culmination over the refined window. Elevation over a
+          // single visible window is unimodal (one culmination per pass), so a
+          // golden-section search across the whole window finds the true maximum
+          // whether it falls in the interior or — for a pass still climbing when
+          // it enters Earth's shadow — on an edge, without the grid sampling ever
+          // deciding which. Reading the look angles back there fixes both the
+          // understated peak elevation and the compass bearing shown next to it.
+          if (visibleEnd > visibleStart) {
+            const tPk = goldenPeakTime(visibleStart, visibleEnd);
+            if (tPk != null) {
+              const rv = visibilityAt(tPk);
+              if (rv && rv.elevation >= peakElevation) {
+                peakTime = tPk;
+                peakElevation = rv.elevation;
+                peakAzimuth = rv.azimuth;
+              }
+            }
+          }
+
           passes.push({
-            visibleStart: run[0].t,
-            visibleEnd: run[run.length - 1].t,
-            peakTime: peak.t,
-            peakElevation: peak.v.elevation,
-            peakAzimuth: peak.v.azimuth,
+            visibleStart,
+            visibleEnd,
+            peakTime,
+            peakElevation,
+            peakAzimuth,
             peakMag: bright ? bright.v.apparentMag : null,
             // Clipped edges are not rise/set times. Reporting the scan boundary
             // as an AOS ("visible from 22:00") claims precision the scan never
             // had; the UI renders these two cases differently.
-            startClipped: run[0].t <= fromMs,
-            endClipped: run[run.length - 1].t >= lastGridMs,
+            startClipped,
+            endClipped,
           });
         }
         run = [];

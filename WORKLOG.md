@@ -1,5 +1,59 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-05 — Pass event-time & culmination refinement (worklog follow-up)
+
+The deferred fix from 2026-08-04: the 30 s scan step was the whole remaining
+error budget — ±30 s on the window edges and up to **8.97°** understated at a
+near-zenith culmination, with the compass bearing flipping on half the ISS
+passes checked. `src/passes.js` now refines both off the grid. Full write-up in
+[docs/pass-refinement-2026-08-05.md](docs/pass-refinement-2026-08-05.md).
+
+### What landed
+- **`src/passes.js` — window edges are bisected off the grid.** Each non-clipped
+  edge is refined by bisecting *window membership* (above the 10° gate AND sunlit
+  AND dark sky AND bright enough), so the edge lands on whatever transition
+  actually bounds the window — the gate on a pass that rises and sets in
+  darkness, or the shadow / twilight / brightness edge on one that doesn't — with
+  no special-casing. Clipped edges are scan boundaries, not transitions, and stay
+  as reported.
+- **`src/passes.js` — the culmination is found by golden-section search.**
+  Elevation over a single visible window is unimodal, so a golden-section search
+  across the refined window finds the true maximum whether it falls in the
+  interior or on an edge (a pass still climbing when it enters Earth's shadow
+  peaks at the shadow entry, not at an interior point). The elevation curve near
+  the zenith is far too sharp to read off a parabola through 30 s samples, which
+  is why it's a search, not an interpolation. The look angles — elevation and the
+  compass azimuth — are read back at that instant.
+- **`src/passes.js` — `brightEnough` split into a pure `isBright`** so the edge
+  refinement can reuse the brightness test without tripping the
+  `unknownBrightness` side effect.
+
+### Verified — refined 30 s vs a 1 s scan
+The 1 s scan is the established stand-in for the independent Skyfield/DE421
+reference (2026-08-04: Orbit at `stepSec: 1` reproduces it to ~1 s and ~0.1°).
+Fixed ISS element set over a 45-observer grid, 59 matched passes:
+
+| Quantity | Raw 30 s grid | Refined 30 s vs 1 s |
+|---|---|---|
+| AOS | ≤ 29.8 s | **≤ 78 ms** |
+| LOS | ≤ 29.0 s | **≤ 109 ms** |
+| Peak elevation | ≤ **8.97°** | **≤ 0.065°** |
+| Peak azimuth (el < 85°) | up to a compass point | **≤ 0.61°** |
+
+The highest pass in the grid, near-zenith: raw grid sample maxes at 86.10°, the
+refinement lifts it to 89.69°, a 1 s scan agrees at 89.69° — a 3.59° correction,
+matched to 0.001°. ~4.7 ms per 24 h scan, up from ~2 ms; only emitted passes are
+refined, so the cost stays bounded. Suite now **33 tests**, all passing (was 31):
+two new in `test/passes-refinement.test.mjs` — the grid consistency and the
+near-zenith recovery — and the existing invariants still hold.
+
+### Still to confirm before merge
+- **Re-run the external Heavens-Above cross-check** against the refined output.
+  The 1 s agreement predicts the shipped 30 s should now match Heavens-Above to
+  ~1 s / ~0.2° with all four compass bearings right (raw 30 s read the 71° pass
+  as 68° and flipped two of four bearings), but that external check predates this
+  change and is the last confirmation.
+
 ## 2026-08-05 — GP fetch timeout (worklog follow-up)
 
 Closed the standing "no per-fetch timeout" follow-up (first noted 2026-08-01,

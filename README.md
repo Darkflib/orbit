@@ -111,27 +111,32 @@ their satellites.
 
 ## Accuracy
 
-Pass predictions scan SGP4 on a fixed **30 s grid** over a 24 h horizon and
-report the sampled extremum, so every pass event is quantised to that step. Rise
-and set times are therefore good to about ±30 s, and the peak elevation is
-*understated* — by a fraction of a degree on a typical pass, but by up to ~9° on
-a fast, near-zenith LEO pass, where the elevation curve is at its sharpest. A
-missed culmination can also move the reported compass bearing by one point.
-
-The propagation and geometry underneath are not the limit. Checked against an
-independent implementation (Vallado SGP4 via Skyfield, JPL DE421 Sun, WGS84
-topocentric) on the same element set, and against Heavens-Above:
+Pass predictions scan SGP4 on a fixed **30 s grid** over a 24 h horizon, then
+refine each reported pass off that grid — the window edges by bisecting on
+visibility, the culmination by a golden-section search — so the reported events
+are no longer quantised to the step. Checked against an independent
+implementation (Vallado SGP4 via Skyfield, JPL DE421 Sun, WGS84 topocentric,
+conical umbra) on the same element set, and transitively against Heavens-Above:
 
 | Quantity | Agreement |
 |---|---|
 | SGP4 position | 7.8 m |
 | Look angles, Sun altitude at the observer | 0.0015° |
-| Pass times and peak elevation vs Heavens-Above, same code at a 1 s step | ≤ 2 s, ≤ 0.2° |
+| Peak elevation (refined) | 0.002° |
+| Rise/set bounded by the 10° gate or a magnitude cutoff | ~0.1 s |
+| Rise/set bounded by Earth's shadow | ~2 s |
 
-So the sampling step is the whole error budget; refining the horizon crossings
-and the culmination is a known follow-up. Full write-up, including the
-magnitude, twilight, and never-setting-object behaviour:
-[`docs/pass-validation-2026-08-04.md`](docs/pass-validation-2026-08-04.md).
+The peak is now accurate to the geometry floor — satellite.js's own look angles
+are ~0.0015° from the reference, so the refined culmination is as good as the
+propagator allows. The one edge that is not sub-second is a shadow-bounded one:
+Orbit models Earth's shadow as a cylinder on a spherical Earth, the reference as
+a converging cone on the WGS84 ellipsoid, and the two differ by ~2 s at orbital
+altitude. That is now the largest error in the pass pipeline, though invisible at
+the `hh:mm` the UI renders. Full write-ups: the physics in
+[`docs/pass-validation-2026-08-04.md`](docs/pass-validation-2026-08-04.md); the
+refinement and its independent check in
+[`docs/pass-refinement-2026-08-05.md`](docs/pass-refinement-2026-08-05.md) and
+[`docs/pass-refinement-validation-2026-08-05.md`](docs/pass-refinement-validation-2026-08-05.md).
 
 A pass is only listed when the Sun is more than 6° below the observer's horizon
 (the end of civil twilight), matching the convention Heavens-Above and N2YO use.
