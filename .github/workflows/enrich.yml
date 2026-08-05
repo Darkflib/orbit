@@ -5,10 +5,16 @@
 # Deploy model: this workflow builds data/ fresh and deploys the WHOLE tree
 # (app + freshly built data) as the Pages artifact — deploy-pages publishes an
 # artifact as the entire site. It shares static.yml's `concurrency: pages`
-# group so the two serialise instead of racing. The committed data/ in the repo
-# is the seed static.yml serves between enrich runs; this job overwrites it with
-# a fresh build at deploy time. Change history is appended to an orphan
-# `enrichment-data` branch (best-effort — never blocks the deploy).
+# group so the two serialise instead of racing.
+#
+# The freshly built data/ is pushed to an orphan `enrichment-data` branch, which
+# is the source of truth for published data: static.yml overlays it at deploy
+# time so a code-only push to main can't roll the live site back to the stale
+# data/ committed in the repo (that copy is only a first-deploy seed). The push
+# stays non-blocking — shipping fresh data to the site matters more than
+# recording it — but a failure now means the next static.yml deploy serves the
+# previous run's data until the next enrich run repairs it, so it is logged
+# loudly rather than swallowed as "no change".
 name: Refresh enrichment data
 
 on:
@@ -45,9 +51,10 @@ jobs:
       - name: Build enrichment data
         run: node scripts/enrich/build.mjs
 
-      - name: Append change history to enrichment-data branch (best-effort)
+      - name: Publish data to enrichment-data branch (non-blocking)
         continue-on-error: true
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin enrichment-data || true
@@ -60,8 +67,15 @@ jobs:
           cp -r data /tmp/datab/data
           cd /tmp/datab
           git add -A data
-          git commit -m "data: refresh ${GITHUB_RUN_ID}" && git push origin enrichment-data \
-            || echo "no enrichment change this run"
+          # Distinguish "nothing changed" from "the push failed" — the latter
+          # leaves static.yml serving the previous run's data, so it must not
+          # masquerade as a clean no-op run.
+          if git diff --cached --quiet; then
+            echo "no enrichment change this run — enrichment-data already current"
+          else
+            git commit -m "data: refresh ${GITHUB_RUN_ID}"
+            git push origin enrichment-data
+          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
