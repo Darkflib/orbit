@@ -58,9 +58,17 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin enrichment-data || true
-          if git show-ref --verify --quiet refs/remotes/origin/enrichment-data; then
-            git worktree add /tmp/datab enrichment-data
+          # Base the worktree on FETCH_HEAD, not on a remote-tracking ref.
+          # `git fetch origin enrichment-data` always populates FETCH_HEAD, but it
+          # only creates refs/remotes/origin/enrichment-data when the configured
+          # remote.origin.fetch refspec covers that branch — a wildcard today, but
+          # that is an incidental detail of actions/checkout, not a guarantee. If
+          # it were ever narrowed, a show-ref test would miss the existing branch,
+          # fall through to --orphan, and build unrelated history whose push is
+          # rejected as non-fast-forward — silently stranding the branch that
+          # static.yml now deploys from. Keying off the fetch result is exact.
+          if git fetch origin enrichment-data 2>/dev/null; then
+            git worktree add --detach /tmp/datab FETCH_HEAD
           else
             git worktree add --orphan -b enrichment-data /tmp/datab
           fi
@@ -75,7 +83,9 @@ jobs:
             echo "no enrichment change this run — enrichment-data already current"
           else
             git commit -m "data: refresh ${GITHUB_RUN_ID}"
-            git push origin enrichment-data
+            # HEAD:enrichment-data works from both the detached FETCH_HEAD
+            # worktree and the orphan-branch one.
+            git push origin HEAD:enrichment-data
           fi
 
       - name: Setup Pages
