@@ -7,9 +7,10 @@
 // and skips deleted/blank entries.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { load } from '../scripts/enrich/sources/bsc5.mjs';
 
@@ -109,4 +110,23 @@ test('a missing catalogue file is non-fatal', async () => {
   const { records, meta } = await load(null, { path: '/no/such/bsc5.dat' });
   assert.equal(meta.ok, false);
   assert.equal(records.size, 0);
+});
+
+// Guards the vendored HR->name map generated from IAU-CSN. A first-token split
+// once truncated multi-word IAU names ("Rigil Kentaurus" -> "Rigil") and could
+// alias distinct stars onto one label ("Deneb Algedi" -> "Deneb", clashing with
+// the real Deneb). The generator now preserves the full name column.
+test('the vendored star-name map preserves multi-word names and stays unique', async () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const map = JSON.parse(
+    await readFile(join(here, '..', 'scripts', 'enrich', 'vendor', 'bsc5-names.json'), 'utf8'),
+  );
+
+  assert.equal(map['5459'], 'Rigil Kentaurus', 'HR 5459 keeps its full name');
+  assert.equal(map['6879'], 'Kaus Australis', 'HR 6879 keeps its full name');
+  assert.equal(map['8322'], 'Deneb Algedi', 'HR 8322 keeps its full name');
+  assert.equal(map['7924'], 'Deneb', 'HR 7924 is the real Deneb, distinct from HR 8322');
+
+  const values = Object.values(map);
+  assert.equal(new Set(values).size, values.length, 'star labels must be unique (no aliasing)');
 });
