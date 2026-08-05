@@ -1,7 +1,7 @@
 # Run the unit test suite (physics: visibility, passes, ephemeris) on every push
 # and pull request, and audit dependencies. Tests use Node's built-in runner;
-# the only dependency is satellite.js (dev-only — the app itself still loads it
-# from a CDN import map).
+# the dev-only dependencies are satellite.js and astronomy-engine (the app
+# itself still loads both from a CDN import map).
 #
 # Actions are pinned to full commit SHAs (with the human-readable tag in a
 # trailing comment) so a moved tag can't silently change what runs in CI.

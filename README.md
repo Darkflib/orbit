@@ -148,6 +148,8 @@ bright enough to see.
 
 - Orbital elements: [CelesTrak](https://celestrak.org/) (Dr. T.S. Kelso).
 - Propagation: [satellite.js](https://github.com/shashwatak/satellite-js).
+- Sun / Moon / planet ephemerides and star coordinate transforms:
+  [Astronomy Engine](https://github.com/cosinekitty/astronomy).
 - Rendering: [three.js](https://threejs.org/). Earth textures from the three.js
   examples.
 

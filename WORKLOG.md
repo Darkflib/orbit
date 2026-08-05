@@ -1,5 +1,41 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-05 — Topocentric alt/az for the observer sky (stars, Sun, Moon, planets)
+
+The maths layer the observer / sky-dome view will draw from. `data/sky/stars.json`
+(the vendored BSC5 + IAU names from the prior PRs) gives fixed-star positions;
+this turns those — plus the wandering bodies — into altitude/azimuth for an
+observer and instant. No renderer yet; that's the next PR.
+
+### What landed
+- **`src/celestial.js` — a pure alt/az module** built on
+  [Astronomy Engine](https://github.com/cosinekitty/astronomy) (MIT), chosen over
+  a hand-rolled Keplerian series for the Sun/Moon/planets so the wandering bodies
+  are accurate to well under the naked-eye resolution the mag ≤ 4.5 star layer
+  works at. Like `ephemeris.js` / `visibility.js` it pulls in no renderer.
+  - `starAltAz(raDeg, decDeg, observer, date)` — catalogue J2000 RA/Dec →
+    horizontal. The J2000 vector is rotated EQJ→EQD (precession + nutation)
+    before `Horizon`, which does not precess its inputs; skipping this would sit
+    the whole sky ~0.3° off for 2026 epochs.
+  - `bodyAltAz(body, observer, date)` and `skyBodies()` — Sun, Moon and the five
+    classical naked-eye planets, of-date and aberration-corrected.
+  - Azimuth is degrees clockwise from north, matching `visibility.js` so its
+    `compass()` labels these directly. Refraction is selectable
+    (`'apparent'` default / `'airless'`).
+- **`index.html` — `astronomy-engine` added to the import map**, CSP hash
+  recomputed (the `test/csp.test.mjs` guard re-passes), and pinned as a dev
+  dependency so the Node test suite exercises the same library the browser loads.
+
+### Verified — `test/celestial.test.mjs`, no library-checks-itself circularity
+- **Polaris altitude ≈ observer latitude** (≤ 1.5°) across latitudes and
+  longitudes — external textbook invariant, not an Astronomy Engine value.
+- **Angular separation preserved** between Sirius and Vega to < 0.01° (airless):
+  the transform is a rigid rotation, so catalogue separation must survive it.
+- **Sun path cross-checked** against the project's own independent solar series
+  (`ephemeris.js`): altitude and azimuth agree to < 0.5°.
+- Moon/planet smoke (finite alt ∈ [−90, 90], az ∈ [0, 360), distance > 0) and
+  refraction monotonicity (apparent ≥ airless).
+
 ## 2026-08-05 — Pass event-time & culmination refinement (worklog follow-up)
 
 The deferred fix from 2026-08-04: the 30 s scan step was the whole remaining
