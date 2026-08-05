@@ -1,5 +1,27 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-05 — GP fetch timeout (worklog follow-up)
+
+Closed the standing "no per-fetch timeout" follow-up (first noted 2026-08-01,
+observed live when CelesTrak 403'd Starlink under repeated fetches).
+
+### What landed
+- `src/gp.js` — a `fetchWithTimeout` wrapper puts a hard `AbortController`
+  deadline on every CelesTrak request. Previously a single stalled group left
+  the `Promise.allSettled` in `fetchLayers` open indefinitely and the app sat on
+  the loading screen forever. A timeout now aborts the request; the abort falls
+  through the existing `catch` to a stale-cache fallback when one exists, or
+  surfaces as a normal fetch error otherwise. Threaded a `timeoutMs` option
+  through `fetchGroup`/`fetchDecaying` (default `GP_FETCH_TIMEOUT_MS`) so it is
+  injectable for tests.
+- `src/constants.js` — `GP_FETCH_TIMEOUT_MS = 15 s`.
+- `test/gp.test.mjs` — two tests over stubbed `fetch`/`localStorage`: a stalled
+  fetch aborts promptly instead of hanging (no cache → rejects), and a stalled
+  fetch falls back to a stale cache (marked `stale`) when one exists.
+
+### Verified
+- Suite now **30 tests**, all passing (was 28).
+
 ## 2026-08-04 — Pass-prediction validation & fixes
 
 Validated `src/passes.js` / `src/visibility.js` against an independent
