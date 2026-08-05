@@ -9,7 +9,7 @@
     "test": "node --test"
   },
   "devDependencies": {
-    "astronomy-engine": "^2.1.19",
+    "astronomy-engine": "2.1.19",
     "satellite.js": "7.1.0"
   },
   "keywords": [

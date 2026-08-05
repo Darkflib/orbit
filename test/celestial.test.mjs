@@ -87,10 +87,18 @@ test('apparent refraction lifts a low star above its airless altitude', () => {
 
 test('the Sun path agrees with the independent solar model in ephemeris.js', () => {
   // bodyAltAz derives the Sun from Astronomy Engine's VSOP87 ephemeris.
-  // sunDirectionEci is the project's own low-order solar series. Feeding the
-  // latter through the same Horizon step must land within a fraction of a degree
-  // of the former — validating the body → equatorial → horizontal wiring against
-  // a genuinely separate ephemeris.
+  // sunDirectionEci is the project's own low-order solar series — a genuinely
+  // separate ephemeris — so feeding it through the same Horizon step and getting
+  // the same alt/az validates the body → equatorial → horizontal wiring.
+  //
+  // sunDirectionEci already returns apparent coordinates referred to the *mean
+  // equinox of date* (the Almanac low-order series uses the of-date obliquity),
+  // which is exactly the frame Horizon expects — so no EQJ→EQD rotation is
+  // applied here, unlike the star path. That this holds is not assumed: at this
+  // instant the direction matches AE's of-date Sun to 0.0000° in RA and differs
+  // from its J2000 Sun by 0.375° (the precession offset). The tight tolerance
+  // below is set well inside that 0.375° gap, so a frame slip could not pass —
+  // the observed agreement is ~0.003°.
   const observer = { lat: 51.5, lon: -0.12, altKm: 0 };
   const mine = bodyAltAz('Sun', observer, DATE);
 
@@ -100,10 +108,10 @@ test('the Sun path agrees with the independent solar model in ephemeris.js', () 
   const time = Astronomy.MakeTime(DATE);
   const ref = Astronomy.Horizon(time, new Astronomy.Observer(51.5, -0.12, 0), raHours, decDeg, 'normal');
 
-  assert.ok(Math.abs(mine.altitude - ref.altitude) < 0.5, `Sun altitude ${mine.altitude} vs ${ref.altitude}`);
+  assert.ok(Math.abs(mine.altitude - ref.altitude) < 0.05, `Sun altitude ${mine.altitude} vs ${ref.altitude}`);
   // Compare azimuth on the circle so the 0/360 wrap can't trip a near-north Sun.
   const dAz = Math.abs(((mine.azimuth - ref.azimuth + 540) % 360) - 180);
-  assert.ok(dAz < 0.5, `Sun azimuth ${mine.azimuth} vs ${ref.azimuth} (Δ ${dAz})`);
+  assert.ok(dAz < 0.05, `Sun azimuth ${mine.azimuth} vs ${ref.azimuth} (Δ ${dAz})`);
 });
 
 test('bodyAltAz returns well-formed angles for the Moon and planets', () => {
