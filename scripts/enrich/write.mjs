@@ -76,6 +76,24 @@ export async function writeOutputs(dataDir, records, manifest, sourceMeta) {
   return { records: all.length, buckets: buckets.size };
 }
 
+// Standalone sky artifact for the observer / sky-dome view. Flat array,
+// brightest first, loaded once (NOT NORAD-bucketed) — it's a few hundred rows,
+// not thousands of satellites, and shares no key with the enrichment records.
+// Written unconditionally so a build with the star source missing/empty still
+// leaves a well-formed (empty) file rather than a stale one.
+export async function writeStars(dataDir, records, meta) {
+  const skyDir = join(dataDir, 'sky');
+  await mkdir(skyDir, { recursive: true });
+  const stars = Array.from(records.values()).sort((a, b) => a.mag - b.mag);
+  await writeFile(join(skyDir, 'stars.json'), stringify({
+    schemaVersion: 1,
+    generatedAt: meta.generatedAt,
+    maxMag: meta.maxMag ?? null,
+    stars,
+  }));
+  return stars.length;
+}
+
 // Regenerate the attribution file from each adapter's declared licence.
 export async function writeSources(repoRoot, licences) {
   const body = [
