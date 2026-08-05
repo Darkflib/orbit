@@ -6,7 +6,7 @@
   <!--
     Content Security Policy. Locks scripts, styles, images, connections and
     workers down to this origin plus the specific external hosts the app needs:
-      - script/img from cdn.jsdelivr.net  (three.js, satellite.js, Earth textures)
+      - script/img from cdn.jsdelivr.net  (three.js, satellite.js, astronomy-engine, Earth textures)
       - connect to celestrak.org          (GP / decaying-object element fetches)
     The inline import map is allow-listed by its sha256 hash — if you change the
     import map you MUST recompute this hash (openssl / browser console) or the
@@ -19,7 +19,7 @@
     default-src 'self';
     base-uri 'self';
     object-src 'none';
-    script-src 'self' https://cdn.jsdelivr.net 'sha256-yPBdeAWAtgi2bccu7UWXHVk5XDQTT10wYTwQYNq6XAA=';
+    script-src 'self' https://cdn.jsdelivr.net 'sha256-Y1zW/wPig1IAo9v4XKMdWCGjD4b9+ypEfU9FTOSPOR0=';
     worker-src 'self';
     connect-src 'self' https://celestrak.org;
     img-src 'self' data: https://cdn.jsdelivr.net;
@@ -36,7 +36,8 @@
     "imports": {
       "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-      "satellite.js": "https://cdn.jsdelivr.net/npm/satellite.js@7.1.0/+esm"
+      "satellite.js": "https://cdn.jsdelivr.net/npm/satellite.js@7.1.0/+esm",
+      "astronomy-engine": "https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/+esm"
     }
   }
   </script>
