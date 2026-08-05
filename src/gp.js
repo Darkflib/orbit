@@ -16,14 +16,23 @@ import {
   GP_FETCH_TIMEOUT_MS, REENTRY_LAYER, REENTRY_MAX_AGE_MS,
 } from './constants.js';
 
-// fetch() with a hard timeout. A stalled request aborts after `timeoutMs`
-// instead of hanging forever; the abort surfaces as a rejection, which the
-// callers below turn into a stale-cache fallback or a normal fetch error.
-async function fetchWithTimeout(url, opts, timeoutMs) {
+// fetch() + JSON parse under a single hard timeout. A stalled request aborts
+// after `timeoutMs` instead of hanging forever; the abort surfaces as a
+// rejection, which the callers below turn into a stale-cache fallback or a
+// normal fetch error.
+//
+// The deadline deliberately spans the body read as well as the headers: fetch()
+// resolves as soon as the response headers arrive, so a server that then stalls
+// or trickles the JSON body would slip past a timeout that only guarded the
+// headers. Keeping the timer armed until `res.json()` settles (it is cleared in
+// `finally`, after the parse) means a stalled body is aborted too.
+async function fetchJsonWithTimeout(url, opts, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...opts, signal: controller.signal });
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
   } finally {
     clearTimeout(timer);
   }
@@ -106,9 +115,7 @@ async function fetchElements(cacheName, url, maxAge, force, timeoutMs = GP_FETCH
   }
 
   try {
-    const res = await fetchWithTimeout(url, { mode: 'cors' }, timeoutMs);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await fetchJsonWithTimeout(url, { mode: 'cors' }, timeoutMs);
     if (!Array.isArray(data) || data.length === 0) throw new Error('no elements returned');
     const records = data.map(ommToRecord);
     writeCache(cacheName, records);
