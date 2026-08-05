@@ -10,14 +10,15 @@
 // read a VENDORED copy (scripts/enrich/vendor/bsc5.dat) rather than re-fetching
 // a catalogue that never changes. Source: VizieR V/50 (CDS, Strasbourg).
 // Licence: public-domain scientific catalogue, freely redistributable with
-// attribution — same freeware tier as mmccants. The file is not yet vendored;
-// until it is, the build's soft-load simply reports zero stars (additive,
-// non-fatal), exactly like a missing magnitude source.
+// attribution — same freeware tier as mmccants. If the vendored file is absent
+// the build's soft-load reports zero stars (additive, non-fatal), exactly like
+// a missing magnitude source.
 //
 // Proper names ("Sirius") are NOT in BSC5's designation field, so an optional
-// vendored HR->name map (vendor/bsc5-names.json, from the IAU WGSN list)
-// supplies the handful the UI labels. Everything else falls back to its
-// Bayer/Flamsteed designation from the catalogue's Name field.
+// vendored HR->name map (vendor/bsc5-names.json) supplies them. That map is
+// generated from the IAU Catalog of Star Names (IAU WGSN, CC-BY 4.0) by
+// scripts/enrich/gen-bsc5-names.mjs. Stars without a mapped name fall back to
+// their Bayer/Flamsteed designation from the catalogue's Name field.
 //
 // Fixed-width format (1-indexed columns, per the VizieR V/50 ReadMe):
 //   1-  4  HR (Harvard Revised) number
@@ -39,7 +40,8 @@ const NAMES = join(HERE, '..', 'vendor', 'bsc5-names.json');
 
 export const id = 'bsc5';
 export const licence =
-  'Yale Bright Star Catalogue, 5th ed. (Hoffleit & Warren) — public domain, via VizieR V/50 (CDS)';
+  'Yale Bright Star Catalogue, 5th ed. (Hoffleit & Warren) — public domain, via VizieR V/50 (CDS); ' +
+  'proper names from the IAU Catalog of Star Names (IAU WGSN, CC-BY 4.0)';
 
 const num = (s) => {
   const v = parseFloat(s);
