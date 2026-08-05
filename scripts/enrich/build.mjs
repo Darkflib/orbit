@@ -16,9 +16,10 @@ import { getText } from './http.mjs';
 import * as satcat from './sources/satcat.mjs';
 import * as gcat from './sources/gcat.mjs';
 import * as mmccants from './sources/mmccants.mjs';
+import * as bsc5 from './sources/bsc5.mjs';
 import { merge } from './merge.mjs';
 import { validate } from './validate.mjs';
-import { writeOutputs, writeSources } from './write.mjs';
+import { writeOutputs, writeStars, writeSources } from './write.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
@@ -54,6 +55,9 @@ async function main() {
 
   const g = await soft(gcat, 'gcat');
   const m = await soft(mmccants, 'mmccants');
+  // Stars are a separate sky artifact, not satellite enrichment — they don't
+  // enter the merge below. Soft-loaded: a missing catalogue just yields no sky.
+  const s = await soft(bsc5, 'bsc5');
 
   const { records, counts } = merge(
     { satcat: base.records, gcat: g.records, mmccants: m.records },
@@ -71,9 +75,14 @@ async function main() {
   };
 
   const written = await writeOutputs(DATA, records, { generatedAt: now, counts }, sourceMeta);
-  await writeSources(REPO, [satcat, gcat, mmccants].map((s) => ({ id: s.id, licence: s.licence })));
+  const nStars = await writeStars(DATA, s.records, { generatedAt: now, maxMag: s.meta.maxMag });
+  await writeSources(
+    REPO,
+    [satcat, gcat, mmccants, bsc5].map((src) => ({ id: src.id, licence: src.licence })),
+  );
 
   log(`wrote ${written.records} records across ${written.buckets} buckets → data/`);
+  log(`wrote ${nStars} stars → data/sky/stars.json`);
   log('done.');
 }
 
