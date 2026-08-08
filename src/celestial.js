@@ -95,3 +95,60 @@ export function bodyAltAz(body, observer, date, { refraction = 'apparent' } = {}
 export function skyBodies(observer, date, opts) {
   return SKY_BODIES.map((name) => ({ name, ...bodyAltAz(name, observer, date, opts) }));
 }
+
+// ---------------------------------------------------------------------------
+// Batched star transform (for the sky renderer)
+//
+// `starAltAz` is the right shape for one star, but the observer view moves a
+// ~900-star catalogue every frame, and per star it would recompute the
+// precession + nutation rotation — which depends only on the instant, not on
+// the star. These three exports split that work the other way round: hoist the
+// one rotation out, cache each star's J2000 unit vector once at load, and spend
+// nine multiplies per star per frame.
+//
+// Note this path is *airless*: Rotation_EQJ_HOR yields the geometric horizontal
+// direction with no refraction term. That is the correct trade for a whole-sky
+// render — refraction only becomes visible within a degree or so of the
+// horizon, where the star field is washed out anyway, and applying it per star
+// would put the per-star trig straight back. Use `starAltAz` (default
+// 'apparent') wherever a single object's placement has to be right at the
+// horizon.
+// ---------------------------------------------------------------------------
+
+// Catalogue J2000 RA/Dec (degrees) -> unit vector in the EQJ frame. Computed
+// once per star at catalogue load; the result is what the per-frame rotation
+// below consumes.
+export function starVectorEqj(raDeg, decDeg, out = { x: 0, y: 0, z: 0 }) {
+  const ra = raDeg * DEG2RAD;
+  const dec = decDeg * DEG2RAD;
+  const cosDec = Math.cos(dec);
+  out.x = cosDec * Math.cos(ra);
+  out.y = cosDec * Math.sin(ra);
+  out.z = Math.sin(dec);
+  return out;
+}
+
+// The EQJ -> HOR rotation for one observer and instant, flattened to nine
+// numbers in the order `rotateEqjToHor` consumes. Astronomy Engine stores the
+// matrix transposed relative to the obvious row-major reading (see RotateVector
+// in the library: output component j sums rot[i][j] * v[i]), so the flattening
+// order here is deliberate — it bakes that transpose in once instead of leaving
+// a trap for every caller.
+export function eqjToHorRotation(observer, date) {
+  const r = Astronomy.Rotation_EQJ_HOR(Astronomy.MakeTime(date), toAstroObserver(observer)).rot;
+  return Float64Array.of(
+    r[0][0], r[1][0], r[2][0],
+    r[0][1], r[1][1], r[2][1],
+    r[0][2], r[1][2], r[2][2],
+  );
+}
+
+// Apply a rotation from `eqjToHorRotation` to an EQJ unit vector, giving a unit
+// vector in Astronomy Engine's horizontal frame (x = north, y = west,
+// z = zenith). skyframe.js `horVecToSky` relabels that into the render frame.
+export function rotateEqjToHor(m, vx, vy, vz, out = { x: 0, y: 0, z: 0 }) {
+  out.x = m[0] * vx + m[1] * vy + m[2] * vz;
+  out.y = m[3] * vx + m[4] * vy + m[5] * vz;
+  out.z = m[6] * vx + m[7] * vy + m[8] * vz;
+  return out;
+}

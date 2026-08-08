@@ -18,6 +18,7 @@ import {
 import {
   getEnrichment, loadIndex, loadManifest, brightnessClass,
 } from './enrichment.js';
+import { createSkyView } from './skyview.js';
 
 // ---- DOM handles ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -48,6 +49,13 @@ const field = new SatelliteField(scene);
 const reentryMarkers = new ReentryMarkers(scene);
 const reentryCorridor = new ReentryCorridor(scene);
 const raycaster = new THREE.Raycaster();
+// Sky mode's scene shares this renderer and canvas — see skyview.js.
+const skyView = createSkyView(renderer, canvas);
+let starCatalogueState = 'idle'; // idle | loading | ready | failed
+
+// Reused every frame so the render loop allocates nothing.
+const sunDirScratch = new THREE.Vector3();
+const ORIGIN = new THREE.Vector3(0, 0, 0);
 
 let activeLayers = LAYERS.filter((l) => l.default);
 let followSelected = false;
@@ -74,8 +82,16 @@ let observer = loadObserver(); // { lat, lon, altKm } or null — observer locat
 // 'tracker' — the full satellite catalogue (default).
 // 'reentry' — CelesTrak's decaying-object watch list, with SGP4-estimated
 //             reentry times and locations.
+// 'sky'     — the observer's local sky: stars, Sun/Moon/planets and the
+//             satellites currently above their horizon (skyview.js).
 let mode = 'tracker';
 let reentryEstimates = [];        // per field-index estimate (reentry mode only)
+let loadedDataset = null;         // which catalogue the field currently holds
+// Declared here, not down beside setMode: the boot sequence below calls
+// setMode('tracker') immediately, and a const declared later in the file would
+// still be in its temporal dead zone at that point — the same trap OBSERVER_KEY
+// carries a warning about above, which this hit for real.
+const MODE_TITLES = { tracker: 'Layers', reentry: 'Reentry watch', sky: 'Sky' };
 
 buildLayerToggles();
 buildSpeedButtons();
@@ -117,25 +133,76 @@ async function loadData(layers, opts = {}) {
 }
 
 // ---- View mode -------------------------------------------------------------
+// Which catalogue a mode needs. Tracker and Sky both plot the full satellite
+// field — Sky just looks at it from the ground — so switching between them must
+// not refetch ~12k element sets.
+function datasetFor(m) {
+  return m === 'reentry' ? 'reentry' : 'tracker';
+}
+
 function setMode(next) {
   mode = next;
   const reentry = next === 'reentry';
-  document.body.classList.toggle('mode-reentry', reentry);
-  document.body.classList.toggle('mode-tracker', !reentry);
-  $('mode-tracker').classList.toggle('active', !reentry);
-  $('mode-reentry').classList.toggle('active', reentry);
-  $('mode-tracker').setAttribute('aria-selected', String(!reentry));
-  $('mode-reentry').setAttribute('aria-selected', String(reentry));
-  $('panel-left-title').textContent = reentry ? 'Reentry watch' : 'Layers';
+  const sky = next === 'sky';
+
+  for (const id of ['tracker', 'reentry', 'sky']) {
+    const on = next === id;
+    document.body.classList.toggle(`mode-${id}`, on);
+    $(`mode-${id}`).classList.toggle('active', on);
+    $(`mode-${id}`).setAttribute('aria-selected', String(on));
+  }
+  $('panel-left-title').textContent = MODE_TITLES[next];
+
+  // Sky mode drives its own camera from the same canvas, so the Earth view's
+  // OrbitControls has to let go — otherwise one drag turns both cameras.
+  controls.enabled = !sky;
+  skyView.setActive(sky);
+  if (sky) {
+    skyView.setObserver(observer);
+    ensureStarCatalogue();
+    updateSkyPanel();
+  }
 
   deselect();
   reentryMarkers.setActive(reentry);
-  if (reentry) {
-    loadReentry();
-  } else {
-    reentryEstimates = [];
-    loadData(activeLayers);
+  if (!reentry) reentryEstimates = [];
+
+  const dataset = datasetFor(next);
+  if (dataset !== loadedDataset) {
+    loadedDataset = dataset;
+    if (reentry) loadReentry();
+    else loadData(activeLayers);
   }
+}
+
+// ---- Sky mode ---------------------------------------------------------------
+// The star catalogue is ~80 KB and only Sky mode needs it, so it is fetched on
+// first entry rather than at boot. A failure is not fatal: the Sun, Moon,
+// planets and satellites are all computed live and still render.
+async function ensureStarCatalogue() {
+  if (starCatalogueState !== 'idle') return;
+  starCatalogueState = 'loading';
+  try {
+    const res = await fetch('./data/sky/stars.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    skyView.setStars(await res.json());
+    starCatalogueState = 'ready';
+  } catch (err) {
+    starCatalogueState = 'failed';
+    console.warn('Star catalogue failed to load:', err);
+    toast('Star catalogue unavailable — showing Sun, Moon, planets and satellites only.');
+  }
+}
+
+function updateSkyPanel() {
+  const has = !!observer;
+  $('sky-prompt').classList.toggle('hidden', has);
+  $('sky-body').classList.toggle('hidden', !has);
+  if (!has) return;
+  $('sky-where').textContent = fmtLatLon(observer);
+  const { azimuth, altitude } = skyView.orientation;
+  $('sky-facing').textContent = `${compass(azimuth)} ${Math.round(azimuth)}°`;
+  $('sky-alt').textContent = `${Math.round(altitude)}°`;
 }
 
 // Load the decaying-object watch list and derive reentry estimates for it.
@@ -292,20 +359,28 @@ function animate() {
   const date = new Date(simMs);
 
   field.requestPropagate(simMs);
-  setSunDirection(sunDirectionScene(date));
+  const sunDir = sunDirectionScene(date, sunDirScratch);
+  setSunDirection(sunDir);
 
   // Selected-satellite readout + overlays.
   const sel = field.updateSelection(date);
   if (sel) updateReadout(sel);
   if (mode === 'reentry') updateReentryCountdown();
-  if (followSelected && sel) {
-    controls.target.lerp(sel.scenePosition, 0.08);
-  } else {
-    controls.target.lerp(new THREE.Vector3(0, 0, 0), 0.05);
-  }
 
-  controls.update();
-  renderer.render(scene, camera);
+  if (mode === 'sky') {
+    // The sky scene has no orbit target to follow and no Earth to frame; it
+    // reads the field's live position buffer and draws from the ground.
+    skyView.update(date, field, sunDir);
+    skyView.render();
+  } else {
+    if (followSelected && sel) {
+      controls.target.lerp(sel.scenePosition, 0.08);
+    } else {
+      controls.target.lerp(ORIGIN, 0.05);
+    }
+    controls.update();
+    renderer.render(scene, camera);
+  }
 
   // Clock + FPS.
   $('clock-utc').textContent = fmtClock(date);
@@ -318,6 +393,7 @@ function animate() {
     fpsAnchor = nowp;
     updateCacheAge();
     if (mode === 'reentry') refreshReentryEtas();
+    if (mode === 'sky') updateSkyPanel();
     if (sel && observer) updateVisibility(sel, date);
   }
 }
@@ -411,6 +487,11 @@ function wireControls() {
     const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
     downPos = null;
     if (moved > 6) return; // was a drag
+    // This raycast is against the Earth scene's camera and point cloud, neither
+    // of which is on screen in sky mode — it would select whatever happened to
+    // sit under the cursor in the hidden view. Picking from the sky view needs
+    // its own raycast against the sky point cloud; until then, don't guess.
+    if (mode === 'sky') return;
     const ndc = new THREE.Vector2(
       (e.clientX / window.innerWidth) * 2 - 1,
       -(e.clientY / window.innerHeight) * 2 + 1,
@@ -472,6 +553,12 @@ function wireControls() {
   // Mode switch (tracker catalogue ↔ reentry watch list).
   $('mode-tracker').addEventListener('click', () => { if (mode !== 'tracker') setMode('tracker'); });
   $('mode-reentry').addEventListener('click', () => { if (mode !== 'reentry') setMode('reentry'); });
+  $('mode-sky').addEventListener('click', () => { if (mode !== 'sky') setMode('sky'); });
+  $('sky-reset').addEventListener('click', () => {
+    skyView.setOrientation({ azimuth: 180, altitude: 30 });
+    skyView.setFov(65);
+    updateSkyPanel();
+  });
   $('reentry-refresh').addEventListener('click', () => loadReentry({ force: true }));
 
   // Catalogue browser (overlay dialog; independent of the tracker/reentry mode).
@@ -794,7 +881,9 @@ function saveObserver(o) {
     else localStorage.removeItem(OBSERVER_KEY);
   } catch { /* private mode — session-only is fine */ }
   updateVisibilitySection();
-  updatePasses(); // location changed — recompute upcoming passes
+  updatePasses();      // location changed — recompute upcoming passes
+  skyView.setObserver(o); // ...and re-anchor the sky view's horizon
+  if (mode === 'sky') updateSkyPanel();
 }
 
 function fmtLatLon(o) {

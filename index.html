@@ -64,6 +64,7 @@
     <div class="modeswitch" role="tablist" aria-label="View mode">
       <button id="mode-tracker" class="active" role="tab" aria-selected="true">Tracker</button>
       <button id="mode-reentry" role="tab" aria-selected="false">Reentry</button>
+      <button id="mode-sky" role="tab" aria-selected="false">Sky</button>
       <button id="mode-catalogue" role="tab" aria-selected="false" aria-haspopup="dialog">Catalogue</button>
     </div>
     <div class="stats">
@@ -105,6 +106,31 @@
         <span class="subtle">sorted by ETA</span>
       </div>
       <ul id="reentry-list" class="reentry-list"></ul>
+    </div>
+
+    <!-- Sky mode: the observer's local sky -->
+    <div class="panel-section" id="sky-section">
+      <p class="sky-note" id="sky-prompt">
+        The sky view needs your location. Open <strong>Settings</strong> to set
+        it — it stays on this device.
+      </p>
+      <div id="sky-body" class="hidden">
+        <p class="sky-note">
+          Looking up from <span id="sky-where">—</span>. Drag to look around,
+          scroll to zoom.
+        </p>
+        <div class="sky-look">
+          <div><dt>Facing</dt><dd id="sky-facing">—</dd></div>
+          <div><dt>Altitude</dt><dd id="sky-alt">—</dd></div>
+        </div>
+        <div class="sky-legend">
+          <span><span class="dot-star"></span> stars to mag 4.5</span>
+          <span><span class="dot-body"></span> Sun, Moon, planets</span>
+          <span><span class="dot-sat"></span> sunlit satellite</span>
+          <span><span class="dot-sat-dim"></span> in Earth's shadow</span>
+        </div>
+        <button id="sky-reset" class="wide-btn ghost">Face south, 30° up</button>
+      </div>
     </div>
 
     <div class="panel-section">

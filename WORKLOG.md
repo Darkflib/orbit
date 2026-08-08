@@ -1,5 +1,93 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-08 — Sky mode: the observer view, in 3D
+
+The renderer the previous three PRs were building toward. A third view mode
+beside Tracker and Reentry that stands the camera at the observer's location and
+looks up: stars, the Sun/Moon/planets, and every satellite currently above the
+horizon, all moving with the simulation clock.
+
+### 3D, not a 2D all-sky chart — and why that decision drove the frame
+A flat alt/az chart would have been less work, but the intent is to drive the
+camera from **phone orientation sensors** later (Google Sky Map style). That
+makes the native coordinate frame the important choice, not the projection:
+`deviceorientation` reports against gravity and magnetic north, which *is* the
+horizontal frame. Building the scene in alt/az means the sensor driver becomes a
+quaternion handed to the camera, with no change of basis anywhere. A chart would
+have had to be torn up to get there.
+
+Every camera driver therefore goes through one seam — `setOrientation` — which
+pointer-drag calls today and a sensor handler is meant to call tomorrow.
+
+### What landed
+- **`src/skyframe.js` — the local sky frame, render-free.** Fixes the
+  convention (+X east, +Y zenith, −Z north; azimuth clockwise from north,
+  matching `visibility.js`) and provides `altAzToVec` / `vecToAltAz`, the
+  Astronomy-Engine-horizontal relabelling, a scene→sky transform for satellites,
+  and a scene-frame Earth-shadow test. No three.js, so it unit-tests in Node
+  alongside the rest of the physics.
+- **`src/celestial.js` — batched star transform.** `starAltAz` recomputes
+  precession + nutation per star, which depends only on the instant. The new
+  `starVectorEqj` / `eqjToHorRotation` / `rotateEqjToHor` hoist that out: one
+  matrix per frame, nine multiplies per star, so the ~900-star catalogue moves
+  every frame for nothing. This path is airless by construction — noted in the
+  source, since refraction only matters within a degree of the horizon.
+- **`src/skyview.js` — the scene.** Shares the Earth view's renderer and canvas
+  (one WebGL context); the render loop just picks which scene/camera pair to
+  draw. Stars sized by magnitude, Sun/Moon/planets as sprites, an **opaque
+  ground plane** so below-horizon objects are occluded by depth rather than by
+  per-object tests, horizon ring, cardinal markers, and constant-screen-size
+  labels.
+- **Satellites cost almost nothing.** The propagation worker already publishes
+  scene-frame ECEF for the whole field each tick, so the overlay is one rotation
+  per object — no extra SGP4. Objects in Earth's shadow are dimmed rather than
+  hidden, because "which of these could I actually see" is the point of the view.
+- **Tracker and Sky share a dataset**, so switching between them no longer
+  refetches ~12k element sets (`datasetFor`).
+
+No new dependencies and **no CSP change** — three and astronomy-engine were
+already in the import map, so the `test/csp.test.mjs` hash guard still passes.
+
+### Verified — `test/skyframe.test.mjs` (11 new tests, suite now 57)
+Cross-checks between independent paths, not values this code produced:
+- **Scene→sky look angles vs `visibility.js`** over four observers × five
+  satellite positions: the hand-rolled ENU basis and satellite.js's
+  `ecfToLookAngles` agree on altitude, azimuth and range to **< 1e-6**. This is
+  what catches an axis swap or sign flip in the frame relabelling.
+- **Batched EQJ→HOR vs `starAltAz`** (airless) across three observers and five
+  stars, to < 1e-6; plus a rigid-rotation check (Sirius–Vega separation
+  preserved to 1e-12).
+- **`isSunlitScene` vs `visibility.js` `satSunlit`** — same shadow model in the
+  other frame, so this validates the frame conversion.
+- Cardinal axis mapping, alt/az round-trips, zenith placement, unit directions.
+
+### Verified in a browser
+Driven headless with Playwright (CDN and CelesTrak stubbed — neither is
+reachable from the dev sandbox). Beyond "no console errors", the sky was checked
+for astronomical sense at 52.83 N:
+- **2026-08-08 ~11:52 UTC** (near local noon): Sun high in the south with
+  **Regulus** beside it — correct for August — and Mercury close by.
+- **~23:57 UTC**: **Fomalhaut** low in the south (dec −29.6°, culminates ~7.6°
+  from this latitude) and **Altair + Vega** high overhead — the Summer Triangle.
+
+Three defects were found only by looking at it, and fixed: labels scaled in
+world space grew without bound on zoom (now constant screen size, recomputed
+from the field of view); stars were too faint; and `gl_PointSize` is in
+framebuffer pixels, so every point would have rendered at half size on a 2x
+display.
+
+### Follow-ups
+- **Device orientation.** The reason for 3D. `setOrientation` is the seam; a
+  sensor driver wants a quaternion path that bypasses `lookAt` (and so the
+  ±89.5° pitch clamp the up-vector camera needs).
+- **Constellation lines.** The data already flows through the enrichment
+  pipeline and is never drawn — the thinnest remaining piece of the sky view.
+- **Picking in sky mode.** Clicking currently does nothing there: the existing
+  raycast is against the Earth scene's camera and point cloud, so it would
+  select whatever sat under the cursor in the hidden view. It is explicitly
+  skipped rather than left to guess; sky picking needs its own raycast.
+- **Star colour.** `stars.json` carries no B−V, so every star renders white.
+
 ## 2026-08-05 — Topocentric alt/az for the observer sky (stars, Sun, Moon, planets)
 
 The maths layer the observer / sky-dome view will draw from. `data/sky/stars.json`

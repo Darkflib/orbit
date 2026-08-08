@@ -51,6 +51,14 @@ coverage footprint.
   time-to-reentry, and selecting one shows its predicted reentry time,
   countdown, and coordinates. These are SGP4 estimates — indicative of the
   trend, not authoritative reentry forecasts.
+- **Sky mode.** The same sky you'd see standing at your location and looking up:
+  ~900 stars to magnitude 4.5 from the Bright Star Catalogue, the Sun, Moon and
+  five naked-eye planets, and every tracked satellite currently above your
+  horizon — satellites in Earth's shadow are dimmed, since those are the ones
+  you can't see. Drag to look around, scroll to zoom. The scene is built in the
+  observer's horizontal (altitude/azimuth) frame, which is the frame phone
+  orientation sensors report in, so pointing a phone at the sky is a natural
+  extension. Needs a location set in Settings; it never leaves the device.
 
 ## Running it
 
