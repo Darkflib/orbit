@@ -159,9 +159,13 @@ function setMode(next) {
   skyView.setActive(sky);
   if (sky) {
     skyView.setObserver(observer);
-    ensureStarCatalogue();
+    skyView.setSelected(-1); // deselect() below clears the field's selection too
+    ensureSkyCatalogues();
     updateSkyPanel();
   }
+  // Both directions: entering sky mode must show the button in its real state,
+  // and leaving it must reflect the sensor release setActive() just performed.
+  syncSensorButton();
 
   deselect();
   reentryMarkers.setActive(reentry);
@@ -176,21 +180,37 @@ function setMode(next) {
 }
 
 // ---- Sky mode ---------------------------------------------------------------
-// The star catalogue is ~80 KB and only Sky mode needs it, so it is fetched on
-// first entry rather than at boot. A failure is not fatal: the Sun, Moon,
-// planets and satellites are all computed live and still render.
-async function ensureStarCatalogue() {
+// The sky artifacts total ~100 KB and only Sky mode needs them, so they are
+// fetched on first entry rather than at boot. Neither is fatal: the Sun, Moon,
+// planets and satellites are computed live and still render without them, and
+// the two are fetched independently so a missing figure file still leaves stars.
+async function ensureSkyCatalogues() {
   if (starCatalogueState !== 'idle') return;
   starCatalogueState = 'loading';
-  try {
-    const res = await fetch('./data/sky/stars.json');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    skyView.setStars(await res.json());
-    starCatalogueState = 'ready';
-  } catch (err) {
-    starCatalogueState = 'failed';
-    console.warn('Star catalogue failed to load:', err);
+
+  const load = async (path, apply, what) => {
+    try {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      apply(await res.json());
+      return true;
+    } catch (err) {
+      console.warn(`${what} failed to load:`, err);
+      return false;
+    }
+  };
+
+  const [stars, figures] = await Promise.all([
+    load('./data/sky/stars.json', (d) => skyView.setStars(d), 'Star catalogue'),
+    load('./data/sky/constellations.json', (d) => skyView.setConstellations(d), 'Constellation lines'),
+  ]);
+
+  starCatalogueState = stars ? 'ready' : 'failed';
+  if (!stars) {
     toast('Star catalogue unavailable — showing Sun, Moon, planets and satellites only.');
+  } else if (figures) {
+    // Only meaningful once the figures exist; the checkbox starts checked.
+    skyView.setConstellationsVisible($('sky-constellations').checked);
   }
 }
 
@@ -203,6 +223,28 @@ function updateSkyPanel() {
   const { azimuth, altitude } = skyView.orientation;
   $('sky-facing').textContent = `${compass(azimuth)} ${Math.round(azimuth)}°`;
   $('sky-alt').textContent = `${Math.round(altitude)}°`;
+  // Only offer the sensor control where the API exists at all — on a desktop
+  // browser the button would be a dead end.
+  $('sky-compass').classList.toggle('hidden', !skyView.deviceOrientationSupported);
+}
+
+// Reflect whether the sensors are currently driving the camera.
+function syncSensorButton() {
+  const on = skyView.isSensorDriven();
+  $('sky-compass').classList.toggle('active', on);
+  $('sky-compass').textContent = on ? 'Stop using device' : 'Point with device';
+  $('sky-compass-note').classList.toggle('hidden', !on);
+  // Drag is disabled while the sensors are in charge, so say so.
+  $('sky-reset').disabled = on;
+}
+
+async function toggleDeviceOrientation() {
+  if (skyView.isSensorDriven()) {
+    skyView.disableDeviceOrientation();
+  } else if (!await skyView.enableDeviceOrientation()) {
+    toast('Device orientation unavailable — permission denied, or this device has no compass.');
+  }
+  syncSensorButton();
 }
 
 // Load the decaying-object watch list and derive reentry estimates for it.
@@ -487,11 +529,15 @@ function wireControls() {
     const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
     downPos = null;
     if (moved > 6) return; // was a drag
-    // This raycast is against the Earth scene's camera and point cloud, neither
-    // of which is on screen in sky mode — it would select whatever happened to
-    // sit under the cursor in the hidden view. Picking from the sky view needs
-    // its own raycast against the sky point cloud; until then, don't guess.
-    if (mode === 'sky') return;
+    // Sky mode has its own camera and point cloud, so it does its own raycast —
+    // the Earth-scene one below would select whatever sat under the cursor in
+    // the view that isn't on screen.
+    if (mode === 'sky') {
+      const hit = skyView.pick(e.clientX, e.clientY);
+      if (hit >= 0) selectIndex(hit);
+      else deselect();
+      return;
+    }
     const ndc = new THREE.Vector2(
       (e.clientX / window.innerWidth) * 2 - 1,
       -(e.clientY / window.innerHeight) * 2 + 1,
@@ -559,6 +605,10 @@ function wireControls() {
     skyView.setFov(65);
     updateSkyPanel();
   });
+  $('sky-constellations').addEventListener('change', (e) => {
+    skyView.setConstellationsVisible(e.target.checked);
+  });
+  $('sky-compass').addEventListener('click', toggleDeviceOrientation);
   $('reentry-refresh').addEventListener('click', () => loadReentry({ force: true }));
 
   // Catalogue browser (overlay dialog; independent of the tracker/reentry mode).
@@ -594,6 +644,7 @@ function wireControls() {
 function selectIndex(idx, recenter = false) {
   const rec = field.select(idx);
   if (!rec) return;
+  skyView.setSelected(idx); // ring the same object in the sky view
   $('panel-right').classList.remove('hidden');
   $('sel-name').textContent = rec.name;
   updateInfoLinks(rec);
@@ -615,6 +666,7 @@ function selectIndex(idx, recenter = false) {
 
 function deselect() {
   field.deselect();
+  skyView.setSelected(-1);
   $('panel-right').classList.add('hidden');
   $('sel-enrich').classList.add('hidden');
   enrichReqNorad = null;

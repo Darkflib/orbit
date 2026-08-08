@@ -26,7 +26,10 @@
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
 import { skyBodies, starVectorEqj, eqjToHorRotation, rotateEqjToHor } from './celestial.js';
-import { altAzToVec, horVecToSky, makeSkyTransform, isSunlitScene } from './skyframe.js';
+import {
+  altAzToVec, vecToAltAz, horVecToSky, makeSkyTransform, isSunlitScene,
+  deviceOrientationQuaternion,
+} from './skyframe.js';
 import { EARTH_RADIUS } from './constants.js';
 
 // Radius of the celestial sphere in scene units. Arbitrary — nothing here has a
@@ -84,6 +87,12 @@ export function createSkyView(renderer, canvas) {
   let toSky = null;          // scene-frame -> sky-frame transform for this observer
   let starData = null;       // { eqj: Float32Array, count, positions, sizes }
   let satCount = 0;
+  let selectedIndex = -1;    // field index of the selected satellite, or -1
+  let sensorDriven = false;  // true while the device's sensors drive the camera
+
+  const forward = new THREE.Vector3();
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
 
   // Where the camera looks, in the same alt/az the rest of the app speaks.
   // South at a comfortable elevation is the default — it is where most of the
@@ -125,11 +134,28 @@ export function createSkyView(renderer, canvas) {
     scene.add(s);
   }
 
+  const constellations = makeConstellationLines();
+  scene.add(constellations.lines);
+
   const stars = makeStarPoints(dot);
   scene.add(stars.points);
 
   const starLabels = new THREE.Group();
   scene.add(starLabels);
+
+  // Ring drawn around the selected satellite so a pick is visible in the sky,
+  // matching the marker the Earth view puts on the same object.
+  const selectionRing = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeRingTexture(),
+    color: 0xffffff,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  selectionRing.scale.setScalar(22);
+  selectionRing.visible = false;
+  scene.add(selectionRing);
 
   const bodies = makeBodySprites(dot, addLabel);
   bodies.forEach((b) => scene.add(b.sprite, b.label));
@@ -172,6 +198,25 @@ export function createSkyView(renderer, canvas) {
     }
   }
 
+  // --- Constellation figures -------------------------------------------------
+  // Same treatment as the stars: cache each vertex's J2000 unit vector once, and
+  // rotate the whole set with the single per-frame matrix.
+  function setConstellations(catalogue) {
+    const verts = [];
+    for (const con of catalogue.constellations) {
+      for (const line of con.lines) {
+        // Flat [ra, dec, ra, dec, ...] polyline -> LineSegments pairs, so one
+        // draw call covers all 88 figures. Each interior point is emitted twice
+        // (as the end of one segment and the start of the next).
+        const points = line.length / 2;
+        for (let i = 0; i < points - 1; i++) {
+          verts.push(line[i * 2], line[i * 2 + 1], line[(i + 1) * 2], line[(i + 1) * 2 + 1]);
+        }
+      }
+    }
+    constellations.setSegments(verts);
+  }
+
   // --- Observer --------------------------------------------------------------
   function setObserver(next) {
     observer = next;
@@ -179,8 +224,8 @@ export function createSkyView(renderer, canvas) {
   }
 
   // --- Camera orientation ----------------------------------------------------
-  // The single seam every orientation driver goes through. Pointer drag calls it
-  // today; a `deviceorientation` handler is meant to call it tomorrow.
+  // The single seam every orientation driver goes through: pointer drag, the
+  // reset button, and (via `setDeviceQuaternion`) the phone's sensors.
   function setOrientation({ azimuth, altitude }) {
     if (azimuth != null) orientation.azimuth = ((azimuth % 360) + 360) % 360;
     if (altitude != null) {
@@ -192,6 +237,22 @@ export function createSkyView(renderer, canvas) {
   function applyOrientation() {
     const v = altAzToVec(orientation.altitude, orientation.azimuth, SKY_RADIUS);
     camera.lookAt(v.x, v.y, v.z);
+  }
+
+  // The sensor path. It sets the camera quaternion directly rather than going
+  // through `lookAt`, which means it is free of the ±89.5° pitch clamp an
+  // up-vector camera needs — pointing a phone straight at the zenith is the
+  // whole gesture, so it must not hit a stop — and it carries roll, so tilting
+  // the phone rolls the sky with it.
+  function setDeviceQuaternion(alpha, beta, gamma, screen) {
+    const q = deviceOrientationQuaternion(alpha, beta, gamma, screen);
+    camera.quaternion.set(q[0], q[1], q[2], q[3]);
+    // Keep the reported orientation truthful so the panel readout, and any
+    // later switch back to drag, both start from where the phone was pointing.
+    camera.getWorldDirection(forward);
+    const look = vecToAltAz(forward.x, forward.y, forward.z);
+    orientation.azimuth = look.azimuth;
+    orientation.altitude = look.altitude;
   }
 
   function setFov(next) {
@@ -206,14 +267,17 @@ export function createSkyView(renderer, canvas) {
   // shadow test so the sky view and the Earth view agree on what is lit.
   function update(date, field, sunSceneDir) {
     if (!active || !observer) return;
-    updateStars(date);
+    // One rotation matrix serves the stars and the constellation figures — both
+    // are fixed J2000 directions moving with the same sky.
+    const m = eqjToHorRotation(observer, date);
+    updateStars(m);
+    constellations.update(m);
     updateBodies(date);
     updateSats(field, sunSceneDir);
   }
 
-  function updateStars(date) {
+  function updateStars(m) {
     if (!starData) return;
-    const m = eqjToHorRotation(observer, date);
     const { eqj, positions, count } = starData;
     const hor = { x: 0, y: 0, z: 0 };
     const sky = { x: 0, y: 0, z: 0 };
@@ -283,6 +347,10 @@ export function createSkyView(renderer, canvas) {
     const dstCol = sats.colors;
     const dstSize = sats.sizes;
 
+    // Re-established below if the selected satellite is currently drawn; a
+    // selection that has set or been filtered out simply loses its ring.
+    selectionRing.visible = false;
+
     for (let i = 0; i < satCount; i++) {
       const j = i * 3;
       // A satellite hidden by the layer toggles, or below the horizon, gets zero
@@ -306,6 +374,11 @@ export function createSkyView(renderer, canvas) {
       dstCol[j + 1] = col[j + 1] * k;
       dstCol[j + 2] = col[j + 2] * k;
       dstSize[i] = lit ? 5.5 : 3;
+
+      if (i === selectedIndex) {
+        selectionRing.position.set(dst[j], dst[j + 1], dst[j + 2]);
+        selectionRing.visible = true;
+      }
     }
 
     sats.commit();
@@ -317,7 +390,9 @@ export function createSkyView(renderer, canvas) {
   let lastY = 0;
 
   function onPointerDown(e) {
-    if (!active) return;
+    // While the sensors are driving, a drag would fight the next sensor event
+    // and the camera would judder between the two.
+    if (!active || sensorDriven) return;
     dragging = true;
     lastX = e.clientX;
     lastY = e.clientY;
@@ -352,6 +427,89 @@ export function createSkyView(renderer, canvas) {
     setFov(camera.fov * (e.deltaY > 0 ? 1.1 : 1 / 1.1));
   }
 
+  // --- Device orientation ----------------------------------------------------
+  // `deviceorientationabsolute` is referenced to the Earth, which is what a sky
+  // view needs. Plain `deviceorientation` is relative to wherever the device
+  // happened to start on most Android browsers, but on iOS it carries
+  // `webkitCompassHeading`, which is absolute — so it is a usable fallback only
+  // when that field is present.
+  const ABSOLUTE_EVENT = 'deviceorientationabsolute';
+  const FALLBACK_EVENT = 'deviceorientation';
+  let sensorEvent = null;
+
+  function screenAngle() {
+    return window.screen?.orientation?.angle ?? window.orientation ?? 0;
+  }
+
+  function onDeviceOrientation(e) {
+    if (!active || !sensorDriven) return;
+    // iOS reports a true compass heading (clockwise from north) instead of a
+    // usable alpha; alpha runs the other way, hence the subtraction.
+    const alpha = e.webkitCompassHeading != null
+      ? 360 - e.webkitCompassHeading
+      : e.alpha;
+    if (alpha == null || e.beta == null || e.gamma == null) return;
+    setDeviceQuaternion(alpha, e.beta, e.gamma, screenAngle());
+  }
+
+  // Returns true if the sensors are now driving the camera. iOS 13+ gates the
+  // events behind a permission prompt that must be triggered by a user gesture,
+  // which is why this is async and called straight from a click handler.
+  async function enableDeviceOrientation() {
+    const DOE = window.DeviceOrientationEvent;
+    if (!DOE) return false;
+    if (typeof DOE.requestPermission === 'function') {
+      try {
+        if (await DOE.requestPermission() !== 'granted') return false;
+      } catch {
+        return false; // not a user gesture, or the user dismissed it
+      }
+    }
+    sensorEvent = 'ondeviceorientationabsolute' in window ? ABSOLUTE_EVENT : FALLBACK_EVENT;
+    window.addEventListener(sensorEvent, onDeviceOrientation, true);
+    sensorDriven = true;
+    return true;
+  }
+
+  function disableDeviceOrientation() {
+    if (sensorEvent) window.removeEventListener(sensorEvent, onDeviceOrientation, true);
+    sensorEvent = null;
+    sensorDriven = false;
+    // Hand the camera back to the drag controls pointing where the phone left
+    // it, rather than snapping to some remembered direction.
+    setOrientation({ azimuth: orientation.azimuth, altitude: orientation.altitude });
+  }
+
+  // --- Picking ---------------------------------------------------------------
+  // Raycast against the sky's own point cloud. Its vertices are index-parallel
+  // with the satellite field, so a hit index is a field index directly.
+  function pick(clientX, clientY) {
+    if (!satCount) return -1;
+    ndc.set(
+      (clientX / window.innerWidth) * 2 - 1,
+      -(clientY / window.innerHeight) * 2 + 1,
+    );
+    raycaster.setFromCamera(ndc, camera);
+    // Threshold in world units at the sphere's radius — about 1.5 degrees, which
+    // is a forgiving but not silly tap target.
+    raycaster.params.Points.threshold = SKY_RADIUS * 0.026;
+
+    let best = -1;
+    let bestDist = Infinity;
+    for (const hit of raycaster.intersectObject(sats.points, false)) {
+      // Hidden points keep their last position in the buffer, so the size flag
+      // is what says whether a vertex is really on screen.
+      if (sats.sizes[hit.index] <= 0) continue;
+      // Everything sits on one sphere, so ray distance barely separates
+      // candidates — angular distance from the ray is the meaningful one.
+      if (hit.distanceToRay < bestDist) {
+        bestDist = hit.distanceToRay;
+        best = hit.index;
+      }
+    }
+    return best;
+  }
+
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
@@ -367,11 +525,25 @@ export function createSkyView(renderer, canvas) {
   return {
     orientation,
     setStars,
+    setConstellations,
     setObserver,
     setOrientation,
     setFov,
     update,
-    setActive: (v) => { active = v; dragging = false; },
+    pick,
+    enableDeviceOrientation,
+    disableDeviceOrientation,
+    deviceOrientationSupported: typeof window.DeviceOrientationEvent !== 'undefined',
+    isSensorDriven: () => sensorDriven,
+    setConstellationsVisible: (v) => { constellations.lines.visible = v; },
+    setSelected: (i) => { selectedIndex = i; if (i < 0) selectionRing.visible = false; },
+    setActive: (v) => {
+      active = v;
+      dragging = false;
+      // Leaving sky mode must release the sensors: the listener would otherwise
+      // keep turning a camera nobody is looking at.
+      if (!v && sensorDriven) disableDeviceOrientation();
+    },
     render: () => renderer.render(scene, camera),
   };
 }
@@ -434,6 +606,61 @@ function makePointsMaterial(texture, opacity) {
       }
     `,
   });
+}
+
+// Constellation stick figures as one LineSegments — 88 constellations in a
+// single draw call. Vertices are cached as J2000 unit vectors and rotated by the
+// same per-frame matrix the stars use, so the lines cannot drift off them.
+function makeConstellationLines() {
+  const geometry = new THREE.BufferGeometry();
+  const lines = new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color: 0x4a7fb5,
+      transparent: true,
+      // Faint on purpose: the figures are an aid to finding things, and should
+      // never compete with the stars they connect.
+      opacity: 0.34,
+      depthWrite: false,
+    }),
+  );
+  lines.frustumCulled = false;
+  lines.visible = false;
+
+  let eqj = null;
+  let positions = null;
+  let attr = null;
+  const hor = { x: 0, y: 0, z: 0 };
+  const sky = { x: 0, y: 0, z: 0 };
+
+  return {
+    lines,
+    // `verts` is a flat [ra, dec, ra, dec, ...] list of segment endpoints.
+    setSegments(verts) {
+      const count = verts.length / 2;
+      eqj = new Float32Array(count * 3);
+      positions = new Float32Array(count * 3);
+      const v = { x: 0, y: 0, z: 0 };
+      for (let i = 0; i < count; i++) {
+        starVectorEqj(verts[i * 2], verts[i * 2 + 1], v);
+        eqj[i * 3] = v.x; eqj[i * 3 + 1] = v.y; eqj[i * 3 + 2] = v.z;
+      }
+      attr = new THREE.BufferAttribute(positions, 3);
+      attr.setUsage(THREE.DynamicDrawUsage);
+      geometry.setAttribute('position', attr);
+      geometry.setDrawRange(0, count);
+    },
+    update(m) {
+      if (!eqj) return;
+      for (let i = 0; i < eqj.length; i += 3) {
+        rotateEqjToHor(m, eqj[i], eqj[i + 1], eqj[i + 2], hor);
+        // Just inside the star sphere, so a line never z-fights its endpoints.
+        horVecToSky(hor, SKY_RADIUS * 0.995, sky);
+        positions[i] = sky.x; positions[i + 1] = sky.y; positions[i + 2] = sky.z;
+      }
+      attr.needsUpdate = true;
+    },
+  };
 }
 
 function makeStarPoints(texture) {
@@ -559,6 +786,22 @@ function makeDotTexture() {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Hollow ring marking the selected satellite.
+function makeRingTexture() {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2 - 10, 0, Math.PI * 2);
+  ctx.stroke();
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;

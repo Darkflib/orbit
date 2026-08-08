@@ -1,5 +1,89 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-08 — Sky mode follow-ups: device orientation, constellations, picking
+
+The three follow-ups the sky view left open, closed together.
+
+### Device orientation — the reason the view is 3D
+`setOrientation` was built as the single seam every camera driver goes through;
+this adds the second driver. It sets the camera quaternion **directly** rather
+than going through `lookAt`, which matters twice over: it carries roll (tilt the
+phone and the sky tilts with it), and it is free of the ±89.5° pitch clamp an
+up-vector camera needs — pointing straight up is the whole gesture, so it must
+not hit a stop.
+
+The rotation composition lives in `skyframe.js` as **plain arithmetic, not
+three.js Quaternions**, specifically so the frame convention is unit-testable in
+Node. A sign error here points the entire sky the wrong way and the only symptom
+is that it looks subtly wrong on a phone — not something to debug on hardware.
+The tests state the convention physically: *hold the device like this, you must
+be looking there*.
+
+- `deviceorientationabsolute` where available (Earth-referenced); plain
+  `deviceorientation` only as an iOS fallback, where `webkitCompassHeading`
+  makes it absolute. Android's relative alpha would otherwise silently give a
+  sky anchored to wherever the phone happened to start.
+- iOS 13+ permission is requested from the click handler, since it needs a user
+  gesture.
+- Drag is inert while the sensors drive, and leaving Sky mode releases the
+  listener.
+- **Not corrected: magnetic declination.** These APIs report magnetic north —
+  under 2° off in the UK, 20°+ at high latitudes. Fixing it needs a geomagnetic
+  model (WMM/IGRF). The panel says so rather than quietly being wrong.
+
+### Constellation figures — a correction to the earlier plan
+The previous entry called this "data already in the enrichment pipeline". **That
+was wrong**, and worth recording: `scripts/enrich/constellations.mjs` is about
+*satellite* constellations (Starlink, GNSS magnitude fallback). The star
+catalogue's Bayer field ("9Alp CMa") gives constellation *membership* but says
+nothing about which star joins which.
+
+Figure lines are a human convention with no authoritative catalogue — the IAU
+standardised constellation *boundaries* (Delporte, 1930), never the stick
+figures — so they had to come from a source that made an editorial choice.
+Vendored from **d3-celestial (Olaf Frohn), BSD-3-Clause**, which is compatible
+with this project's MIT licence; the licence text is vendored beside the data
+and attribution is in `SOURCES.md`.
+
+Wired through the existing pipeline exactly as BSC5 was: vendored file →
+`sources/constellation-figures.mjs` → `writeConstellations` →
+`data/sky/constellations.json` (88 constellations, 743 segments, 17 KB). Drawn
+as a single `LineSegments` sharing the stars' per-frame rotation matrix, so the
+lines cannot drift off the stars they connect. Toggleable, and faint by design.
+
+### Picking
+Sky mode now raycasts against its own point cloud instead of declining to guess.
+The sky vertices are index-parallel with the satellite field, so a hit index is
+a field index. Two details that matter: hidden points keep their last position
+in the buffer, so the size flag decides what is really on screen; and since
+everything sits on one sphere, ray distance barely separates candidates —
+angular distance from the ray is the meaningful sort. A ring marks the selection,
+matching the Earth view's marker.
+
+### Verified
+Suite **61** (was 57), all passing. New tests cover the device-orientation
+convention (compass bearings, pitch, screen rotation not moving the view, and
+the quaternion being a unit rotation).
+
+Driven in Chromium again, which is where the end-to-end behaviour was confirmed:
+- Synthesised sensor events map exactly as specified — α=0→N, 90→**W**, 180→S,
+  270→**E** (alpha runs counter-clockwise, azimuth clockwise), β=175 reaching
+  85° where drag mode would clamp.
+- Drag verified inert while sensor-driven, and working again after release.
+- A click 245 px left and 25 px above centre while facing S 180°/30° selected a
+  satellite the panel independently placed at **SSE 159°, elevation 30°** —
+  matching the projected direction to a couple of degrees, which is the real
+  test that the pick and the physics agree.
+- Constellation figures land on their stars (Altair on Aquila, Fomalhaut on
+  Piscis Austrinus) and the toggle clears them.
+
+### Follow-ups
+- **Magnetic declination** (above) — the one known inaccuracy in the sensor path.
+- **Smoothing.** Raw sensor output is jittery on real hardware; a low-pass filter
+  on the quaternion is likely wanted, but is better tuned against a real device
+  than guessed at.
+- **Star colour.** `stars.json` still carries no B−V, so every star is white.
+
 ## 2026-08-08 — Sky mode: the observer view, in 3D
 
 The renderer the previous three PRs were building toward. A third view mode

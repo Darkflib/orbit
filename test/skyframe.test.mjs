@@ -17,6 +17,7 @@ import * as satellite from 'satellite.js';
 
 import {
   altAzToVec, vecToAltAz, horVecToSky, makeSkyTransform, isSunlitScene,
+  deviceOrientationQuaternion, quaternionLookAltAz, applyQuat,
 } from '../src/skyframe.js';
 import { starAltAz, starVectorEqj, eqjToHorRotation, rotateEqjToHor } from '../src/celestial.js';
 import { computeVisibility } from '../src/visibility.js';
@@ -216,6 +217,66 @@ test('starVectorEqj returns unit vectors', () => {
     const v = starVectorEqj(ra, dec);
     assert.ok(Math.abs(Math.hypot(v.x, v.y, v.z) - 1) < 1e-12);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Device orientation
+//
+// These pin the physical convention, which is the part that is easy to get
+// silently wrong: a sign error yields a sky that is mirrored or 180 deg out,
+// and the only symptom is that it looks subtly wrong on a phone. Each case is
+// stated as "hold the device like THIS, you must be looking THERE".
+// ---------------------------------------------------------------------------
+
+test('a device held upright points where its compass says', () => {
+  const look = (alpha) => quaternionLookAltAz(deviceOrientationQuaternion(alpha, 90, 0, 0));
+
+  // beta = 90 is upright, so the view is level with the horizon in every case.
+  for (const alpha of [0, 90, 180, 270]) {
+    assert.ok(Math.abs(look(alpha).altitude) < 1e-9, `alpha ${alpha} should be level`);
+  }
+
+  // DeviceOrientationEvent alpha increases COUNTER-clockwise from north, while
+  // azimuth runs clockwise — so they must run in opposite directions.
+  assert.ok(azDiff(look(0).azimuth, 0) < 1e-9, 'alpha 0 looks north');
+  assert.ok(azDiff(look(90).azimuth, 270) < 1e-9, 'alpha 90 looks west');
+  assert.ok(azDiff(look(180).azimuth, 180) < 1e-9, 'alpha 180 looks south');
+  assert.ok(azDiff(look(270).azimuth, 90) < 1e-9, 'alpha 270 looks east');
+});
+
+test('device pitch maps to altitude', () => {
+  // Flat on a table, screen up: the camera on the back faces the ground.
+  assert.ok(quaternionLookAltAz(deviceOrientationQuaternion(0, 0, 0, 0)).altitude < -89.99);
+  // Tipped all the way back: pointed at the zenith, which is the gesture the
+  // whole feature exists for.
+  assert.ok(quaternionLookAltAz(deviceOrientationQuaternion(0, 180, 0, 0)).altitude > 89.99);
+  // Halfway.
+  const half = quaternionLookAltAz(deviceOrientationQuaternion(0, 135, 0, 0));
+  assert.ok(Math.abs(half.altitude - 45) < 1e-9, `expected 45, got ${half.altitude}`);
+});
+
+test('screen rotation does not change where the device points', () => {
+  // Turning the phone to landscape rotates the image, not the view direction.
+  const upright = quaternionLookAltAz(deviceOrientationQuaternion(40, 90, 0, 0));
+  for (const screen of [90, 180, 270]) {
+    const rotated = quaternionLookAltAz(deviceOrientationQuaternion(40, 90, 0, screen));
+    assert.ok(azDiff(rotated.azimuth, upright.azimuth) < 1e-9,
+      `screen ${screen}: azimuth moved`);
+    assert.ok(Math.abs(rotated.altitude - upright.altitude) < 1e-9,
+      `screen ${screen}: altitude moved`);
+  }
+});
+
+test('the device quaternion is a unit rotation preserving lengths and angles', () => {
+  const q = deviceOrientationQuaternion(37, 62, -18, 90);
+  const norm = Math.hypot(...q);
+  assert.ok(Math.abs(norm - 1) < 1e-12, `quaternion norm ${norm}`);
+
+  // Rotating two vectors must preserve their dot product.
+  const a = applyQuat(q, 1, 0, 0);
+  const b = applyQuat(q, 0, 1, 0);
+  assert.ok(Math.abs(Math.hypot(a.x, a.y, a.z) - 1) < 1e-12);
+  assert.ok(Math.abs(a.x * b.x + a.y * b.y + a.z * b.z) < 1e-12, 'axes stay orthogonal');
 });
 
 test('the batched rotation is a rigid rotation (separations preserved)', () => {

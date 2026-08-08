@@ -123,6 +123,93 @@ export function makeSkyTransform(observer) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Device orientation -> camera orientation
+//
+// The reason the sky view is built in the horizontal frame at all: a phone's
+// orientation sensors report against gravity and magnetic north, which is
+// exactly this frame, so pointing the device at the sky needs no change of
+// basis — only a change of units.
+//
+// The rotation composition is the one three.js shipped for years as
+// DeviceOrientationControls (removed from the examples after r131): read the
+// device Euler angles in YXZ order, tilt by -90 deg about X so that "phone held
+// upright" looks at the horizon rather than at the observer's feet, then undo
+// the screen rotation. It is written out here in plain arithmetic instead of
+// with three.js Quaternions so the frame convention can be unit-tested in Node
+// — a sign error here points the whole sky the wrong way, and that is not
+// something to discover on a phone.
+//
+// Not corrected for: magnetic declination. `deviceorientationabsolute` (and
+// iOS's webkitCompassHeading) are referenced to MAGNETIC north, which differs
+// from true north by under 2 deg across the UK but by 20 deg or more at high
+// latitudes. Correcting it needs a geomagnetic model (WMM/IGRF); until then the
+// error is a bearing offset, not a distortion.
+// ---------------------------------------------------------------------------
+
+// Quaternion from Euler angles in three.js 'YXZ' order.
+function quatFromEulerYXZ(x, y, z) {
+  const c1 = Math.cos(x / 2), s1 = Math.sin(x / 2);
+  const c2 = Math.cos(y / 2), s2 = Math.sin(y / 2);
+  const c3 = Math.cos(z / 2), s3 = Math.sin(z / 2);
+  return [
+    s1 * c2 * c3 + c1 * s2 * s3,
+    c1 * s2 * c3 - s1 * c2 * s3,
+    c1 * c2 * s3 - s1 * s2 * c3,
+    c1 * c2 * c3 + s1 * s2 * s3,
+  ];
+}
+
+// Hamilton product, three.js argument order (result = a * b).
+function quatMul(a, b) {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return [
+    ax * bw + aw * bx + ay * bz - az * by,
+    ay * bw + aw * by + az * bx - ax * bz,
+    az * bw + aw * bz + ax * by - ay * bx,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ];
+}
+
+// Rotate a vector by a quaternion.
+export function applyQuat(q, vx, vy, vz, out = { x: 0, y: 0, z: 0 }) {
+  const [qx, qy, qz, qw] = q;
+  // t = 2 * (q_vec x v)
+  const tx = 2 * (qy * vz - qz * vy);
+  const ty = 2 * (qz * vx - qx * vz);
+  const tz = 2 * (qx * vy - qy * vx);
+  out.x = vx + qw * tx + (qy * tz - qz * ty);
+  out.y = vy + qw * ty + (qz * tx - qx * tz);
+  out.z = vz + qw * tz + (qx * ty - qy * tx);
+  return out;
+}
+
+// -90 deg about X: without it, a phone held upright would look at the ground.
+const TILT = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
+
+// Device orientation angles (degrees, as DeviceOrientationEvent reports them)
+// -> a camera quaternion in the sky frame, as [x, y, z, w].
+//   alpha  : rotation about the device z-axis, 0 when the top points to north
+//   beta   : front-to-back tilt; 90 is upright
+//   gamma  : left-to-right tilt
+//   screen : the screen's own rotation (screen.orientation.angle)
+export function deviceOrientationQuaternion(alpha, beta, gamma, screen = 0) {
+  const q = quatMul(
+    quatFromEulerYXZ(beta * DEG2RAD, alpha * DEG2RAD, -gamma * DEG2RAD),
+    TILT,
+  );
+  const half = (-screen * DEG2RAD) / 2;
+  return quatMul(q, [0, 0, Math.sin(half), Math.cos(half)]);
+}
+
+// Where a camera with that orientation is looking, as { altitude, azimuth }.
+// The camera looks along its own -Z, as every three.js camera does.
+export function quaternionLookAltAz(q) {
+  const f = applyQuat(q, 0, 0, -1);
+  return vecToAltAz(f.x, f.y, f.z);
+}
+
 // Is a satellite at ECEF-derived scene position lit by the Sun? Cylindrical
 // Earth-shadow test, the same model visibility.js uses, but expressed in the
 // scene frame so the sky view can run it over the whole field straight off the
