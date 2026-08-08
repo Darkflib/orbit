@@ -242,11 +242,6 @@ export class SatelliteField {
     this.marker.visible = false;
   }
 
-  findByName(name) {
-    const idx = this.records.findIndex((r) => r.name === name);
-    return idx;
-  }
-
   getScenePosition(index, target = new THREE.Vector3()) {
     const attr = this.geometry.getAttribute('position');
     return target.fromBufferAttribute(attr, index);

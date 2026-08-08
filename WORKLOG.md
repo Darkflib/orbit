@@ -1,5 +1,58 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-08 — Search suggestions: replace the native `<datalist>`
+
+Reported from testing the sky view: on mobile the search box offered no
+suggestions at all, "as if the result box is missing" — and on desktop the
+suggestion list had previously been seen appearing well away from the field.
+Both are the same root cause.
+
+### Why a `<datalist>` could not work here
+The suggestion popup for `<input list=…>` is drawn and positioned by the
+*browser*, and the app has no say in either:
+
+- **Mobile.** iOS Safari renders no datalist suggestion UI. The markup is valid,
+  the options were there, and nothing appeared — exactly the reported symptom.
+- **Desktop placement.** The popup is anchored by the browser to the input. The
+  left panel sets `backdrop-filter`, which establishes a containing block and a
+  stacking context, and that is a well-known way to have the anchor computed
+  against the wrong box. Hence the misplacement seen earlier.
+- The panel also sets `overflow: hidden` and is `max-height: 40vh` on phones, so
+  a dropdown nested beside the input would simply be clipped.
+
+None of this is fixable while the browser owns the widget, so the widget had to go.
+
+### What landed
+- **A hand-rolled combobox.** `#search-results` is a direct child of `<body>` —
+  deliberately, so neither the panel's clipping nor its `backdrop-filter` can
+  reach it — positioned `fixed` from the input's `getBoundingClientRect()` and
+  repositioned on resize and on scroll (capturing, so panel scrolling counts).
+  It flips above the field when there is more room there, which is the common
+  case on a phone with the keyboard up.
+- **Options commit on `pointerdown`, not `click`.** The input blurs on click and
+  blur closes the list, so a tap would otherwise land on an element that had
+  already gone. This is what makes tapping a suggestion work at all on a phone.
+- **Ranked matching over the whole catalogue.** Prefix matches first, then
+  matches anywhere in the name, alphabetical within each tier — so "iss" offers
+  ISS (ZARYA) before something that merely contains the letters. Names are
+  lower-cased once per catalogue load rather than per keystroke.
+- **The 4000-name cap is gone.** The old code built up to 4000 `<option>`
+  elements; matching now scans all ~12k records and only the top 40 reach the
+  DOM.
+- Keyboard support (↑/↓/Enter/Escape) and combobox ARIA, neither of which the
+  datalist gave us any control over. `findByName` (exact match only, and the
+  reason a partial name did nothing even on desktop) is now unused and removed.
+
+### Verified
+Driven in Chromium at desktop (1400×900) and as an emulated iPhone 13 with touch:
+- Mobile: suggestions open on tap, and **tapping one selects the satellite** —
+  the interaction that previously did nothing.
+- Placement asserted rather than eyeballed, since misplacement was the bug:
+  left edges aligned, widths equal, 4 px below the field, fully on screen, on
+  both viewports.
+- Prefix-before-substring ranking, case-insensitivity, keyboard navigation,
+  Escape, and close-on-commit all confirmed.
+
 ## 2026-08-08 — Sky mode follow-ups: device orientation, constellations, picking
 
 The three follow-ups the sky view left open, closed together.

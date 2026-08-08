@@ -144,8 +144,9 @@
 
     <div class="panel-section">
       <label class="field-label" for="search">Find a satellite</label>
-      <input id="search" list="sat-list" placeholder="e.g. ISS (ZARYA)" autocomplete="off" />
-      <datalist id="sat-list"></datalist>
+      <input id="search" type="text" placeholder="e.g. ISS (ZARYA)" autocomplete="off"
+             spellcheck="false" role="combobox" aria-expanded="false"
+             aria-controls="search-results" aria-autocomplete="list" />
     </div>
   </aside>
 
@@ -321,6 +322,17 @@
       <footer id="cat-foot" class="cat-foot subtle"></footer>
     </div>
   </section>
+
+  <!--
+    Search suggestions. Deliberately a direct child of <body> rather than living
+    beside the input: the left panel sets `overflow: hidden` (which would clip
+    this list, and on a phone the panel is only 40vh tall) and `backdrop-filter`
+    (which makes the panel a containing block for fixed-position descendants, so
+    a nested dropdown could not be positioned against the viewport). Placed and
+    sized from the input's rect by main.js.
+  -->
+  <ul id="search-results" class="search-results hidden" role="listbox"
+      aria-label="Matching satellites"></ul>
 
   <script type="module" src="./src/main.js"></script>
 </body>

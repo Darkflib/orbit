@@ -191,6 +191,39 @@ html, body {
 }
 #search:focus { outline: none; border-color: var(--accent); }
 
+/* ---------- Search suggestions ----------
+   Lives at the end of <body>, not inside the panel: the panel clips its
+   overflow and its backdrop-filter would trap a fixed-position child. Placed
+   and sized from the input's rect by main.js. */
+.search-results {
+  position: fixed;
+  z-index: 60; /* above both panels (20) and the timebar */
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.search-results.hidden { display: none; }
+.search-opt {
+  padding: 9px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Stops a tap being treated as the start of a scroll/selection gesture. */
+  touch-action: manipulation;
+}
+.search-opt:hover,
+.search-opt.active { background: var(--accent-dim); color: var(--accent); }
+
 /* ---------- Readout ---------- */
 .readout { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
 .readout > div { min-width: 0; }

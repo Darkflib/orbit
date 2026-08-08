@@ -117,7 +117,7 @@ async function loadData(layers, opts = {}) {
     const n = field.load(records);
     updateStats(n);
     updateLayerCounts();
-    buildSearchList();
+    buildSearchIndex();
     if (stale) {
       toast('Using cached GP data (CelesTrak unreachable — showing last known elements).');
     } else if (errors.length) {
@@ -276,7 +276,7 @@ async function loadReentry(opts = {}) {
     computeReentryEstimates();
     buildReentryList();
     updateStats(n);
-    buildSearchList();
+    buildSearchIndex();
     if (stale) {
       toast('Using cached decay data (CelesTrak unreachable — showing last known elements).');
     }
@@ -521,18 +521,153 @@ function buildSkipButtons() {
   }
 }
 
-function buildSearchList() {
-  const list = $('sat-list');
-  list.innerHTML = '';
-  // Cap options for responsiveness; the input still accepts any exact name.
-  const names = field.records.map((r) => r.name).sort();
-  const frag = document.createDocumentFragment();
-  for (const name of names.slice(0, 4000)) {
-    const opt = document.createElement('option');
-    opt.value = name;
-    frag.appendChild(opt);
+// ---- Satellite search -------------------------------------------------------
+// A hand-rolled combobox, replacing a native <datalist>. The datalist looked
+// fine on desktop Chrome and failed elsewhere: iOS Safari renders no suggestion
+// UI for one at all, so on a phone the field silently did nothing, and where the
+// popup did appear the browser anchored it itself — with `backdrop-filter` on
+// the panel establishing a containing block, it landed well away from the input.
+// A list the app renders and positions behaves identically everywhere, and can
+// rank matches rather than relying on the browser's prefix matching.
+//
+// It also drops the old 4000-name cap: matching runs over the whole catalogue
+// and only the top few results are built into DOM.
+const SEARCH_LIMIT = 40;
+let searchNames = [];      // lower-cased names, parallel to field.records
+let searchMatches = [];    // field indices currently offered
+let searchActive = -1;     // index into searchMatches, or -1 for none
+
+// Lower-casing ~12k names on every keystroke is the one thing here that would
+// actually cost something, so it happens once per catalogue load instead.
+function buildSearchIndex() {
+  searchNames = field.records.map((r) => r.name.toLowerCase());
+  closeSearchResults();
+}
+
+// Prefix matches first, then matches anywhere in the name; alphabetical within
+// each tier. Typing "iss" should offer ISS (ZARYA) before CASSIOPEIA.
+function searchCandidates(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const prefix = [];
+  const anywhere = [];
+  for (let i = 0; i < searchNames.length; i++) {
+    const at = searchNames[i].indexOf(q);
+    if (at === 0) prefix.push(i);
+    else if (at > 0) anywhere.push(i);
   }
+  const byName = (a, b) => searchNames[a].localeCompare(searchNames[b]);
+  prefix.sort(byName);
+  anywhere.sort(byName);
+  return prefix.concat(anywhere).slice(0, SEARCH_LIMIT);
+}
+
+function renderSearchResults() {
+  const list = $('search-results');
+  list.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  searchMatches.forEach((recIdx, i) => {
+    const li = document.createElement('li');
+    li.id = `search-opt-${i}`;
+    li.className = 'search-opt';
+    li.setAttribute('role', 'option');
+    li.setAttribute('aria-selected', String(i === searchActive));
+    li.textContent = field.records[recIdx].name;
+    // pointerdown, not click: the input blurs on click, and blur closes the
+    // list — the tap would land on an element that no longer exists.
+    li.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      commitSearch(i);
+    });
+    frag.appendChild(li);
+  });
   list.appendChild(frag);
+  syncSearchActive();
+}
+
+function syncSearchActive() {
+  const list = $('search-results');
+  [...list.children].forEach((li, i) => {
+    const on = i === searchActive;
+    li.classList.toggle('active', on);
+    li.setAttribute('aria-selected', String(on));
+    if (on) li.scrollIntoView({ block: 'nearest' });
+  });
+  $('search').setAttribute(
+    'aria-activedescendant', searchActive >= 0 ? `search-opt-${searchActive}` : '',
+  );
+}
+
+// Anchor the list to the input's current rect. Fixed positioning against the
+// viewport, so panel scrolling and clipping are irrelevant.
+function positionSearchResults() {
+  const r = $('search').getBoundingClientRect();
+  const list = $('search-results');
+  const below = window.innerHeight - r.bottom;
+  list.style.left = `${r.left}px`;
+  list.style.width = `${r.width}px`;
+  // Flip above the field when there is more room there — on a phone in
+  // landscape, or with the keyboard up, "below" can be a few pixels.
+  if (below < 140 && r.top > below) {
+    list.style.top = 'auto';
+    list.style.bottom = `${window.innerHeight - r.top + 4}px`;
+    list.style.maxHeight = `${Math.min(260, r.top - 8)}px`;
+  } else {
+    list.style.bottom = 'auto';
+    list.style.top = `${r.bottom + 4}px`;
+    list.style.maxHeight = `${Math.min(260, below - 8)}px`;
+  }
+}
+
+function openSearchResults() {
+  if (!searchMatches.length) return closeSearchResults();
+  $('search-results').classList.remove('hidden');
+  $('search').setAttribute('aria-expanded', 'true');
+  positionSearchResults();
+}
+
+function closeSearchResults() {
+  searchActive = -1;
+  $('search-results').classList.add('hidden');
+  $('search').setAttribute('aria-expanded', 'false');
+  $('search').setAttribute('aria-activedescendant', '');
+}
+
+// Select the match at `i` (defaulting to the highlighted one, or the best one if
+// the user just pressed Enter without arrowing).
+function commitSearch(i = searchActive < 0 ? 0 : searchActive) {
+  const recIdx = searchMatches[i];
+  if (recIdx == null) return;
+  $('search').value = field.records[recIdx].name;
+  closeSearchResults();
+  $('search').blur(); // on a phone, dismiss the keyboard so the sky is visible
+  selectIndex(recIdx, true);
+}
+
+function onSearchInput() {
+  searchMatches = searchCandidates($('search').value);
+  searchActive = -1;
+  renderSearchResults();
+  openSearchResults();
+}
+
+function onSearchKeydown(e) {
+  const open = !$('search-results').classList.contains('hidden');
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!open) { onSearchInput(); return; }
+    e.preventDefault();
+    const n = searchMatches.length;
+    // From "nothing highlighted", Down goes to the first and Up to the last.
+    searchActive = e.key === 'ArrowDown'
+      ? (searchActive >= n - 1 ? 0 : searchActive + 1)
+      : (searchActive <= 0 ? n - 1 : searchActive - 1);
+    syncSearchActive();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (open && searchMatches.length) commitSearch();
+  } else if (e.key === 'Escape') {
+    closeSearchResults();
+  }
 }
 
 function wireControls() {
@@ -563,10 +698,20 @@ function wireControls() {
   });
 
   // Search box.
-  $('search').addEventListener('change', (e) => {
-    const idx = field.findByName(e.target.value);
-    if (idx >= 0) selectIndex(idx, true);
+  $('search').addEventListener('input', onSearchInput);
+  $('search').addEventListener('keydown', onSearchKeydown);
+  $('search').addEventListener('focus', () => { if ($('search').value) onSearchInput(); });
+  // Closing on blur is safe because the options commit on pointerdown, which
+  // fires first. Deferred so a tap that lands on an option is not raced by it.
+  $('search').addEventListener('blur', () => setTimeout(closeSearchResults, 0));
+  // The list is anchored to the input's rect, so anything that moves the input
+  // has to move the list. `true` catches scrolling inside the panel too.
+  window.addEventListener('resize', () => {
+    if (!$('search-results').classList.contains('hidden')) positionSearchResults();
   });
+  window.addEventListener('scroll', () => {
+    if (!$('search-results').classList.contains('hidden')) positionSearchResults();
+  }, true);
 
   // Time controls.
   $('btn-play').addEventListener('click', () => {
