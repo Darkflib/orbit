@@ -103,8 +103,10 @@ export async function writeStars(dataDir, records, meta) {
 export async function writeConstellations(dataDir, records, meta) {
   const skyDir = join(dataDir, 'sky');
   await mkdir(skyDir, { recursive: true });
-  // Sorted by id so the artifact is byte-stable across builds and a rebuild
-  // that changed nothing produces no diff.
+  // Sorted by id so record order is stable across builds — a Map's insertion
+  // order would otherwise follow the source file. Note this makes the *ordering*
+  // deterministic, not the whole file: `generatedAt` still changes every build,
+  // matching stars.json, which is the more useful consistency here.
   const constellations = Array.from(records.values()).sort((a, b) => a.id.localeCompare(b.id));
   await writeFile(join(skyDir, 'constellations.json'), stringify({
     schemaVersion: 1,

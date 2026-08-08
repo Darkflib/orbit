@@ -51,7 +51,10 @@ const reentryCorridor = new ReentryCorridor(scene);
 const raycaster = new THREE.Raycaster();
 // Sky mode's scene shares this renderer and canvas — see skyview.js.
 const skyView = createSkyView(renderer, canvas);
-let starCatalogueState = 'idle'; // idle | loading | ready | failed
+// Sky artifacts are tracked separately so a failure in one can be retried
+// without discarding the other (see ensureSkyCatalogues).
+const skyCatalogueReady = { stars: false, figures: false };
+let skyLoadInFlight = false;
 
 // Reused every frame so the render loop allocates nothing.
 const sunDirScratch = new THREE.Vector3();
@@ -185,30 +188,38 @@ function setMode(next) {
 // planets and satellites are computed live and still render without them, and
 // the two are fetched independently so a missing figure file still leaves stars.
 async function ensureSkyCatalogues() {
-  if (starCatalogueState !== 'idle') return;
-  starCatalogueState = 'loading';
+  if (skyLoadInFlight) return;
 
-  const load = async (path, apply, what) => {
-    try {
-      const res = await fetch(path);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      apply(await res.json());
-      return true;
-    } catch (err) {
-      console.warn(`${what} failed to load:`, err);
-      return false;
-    }
-  };
+  // Tracked per artifact, not as one shared flag: they fail independently, and
+  // a single flag would let a successful star load mark the whole thing done —
+  // stranding the constellation lines as permanently missing with no retry.
+  const wanted = [
+    ['stars', './data/sky/stars.json', (d) => skyView.setStars(d), 'Star catalogue'],
+    ['figures', './data/sky/constellations.json', (d) => skyView.setConstellations(d), 'Constellation lines'],
+  ].filter(([key]) => !skyCatalogueReady[key]);
+  if (!wanted.length) return;
 
-  const [stars, figures] = await Promise.all([
-    load('./data/sky/stars.json', (d) => skyView.setStars(d), 'Star catalogue'),
-    load('./data/sky/constellations.json', (d) => skyView.setConstellations(d), 'Constellation lines'),
-  ]);
+  skyLoadInFlight = true;
+  try {
+    await Promise.all(wanted.map(async ([key, path, apply, what]) => {
+      try {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        apply(await res.json());
+        skyCatalogueReady[key] = true;
+      } catch (err) {
+        // Left false so the next entry into Sky mode tries this one again.
+        console.warn(`${what} failed to load:`, err);
+      }
+    }));
+  } finally {
+    skyLoadInFlight = false;
+  }
 
-  starCatalogueState = stars ? 'ready' : 'failed';
-  if (!stars) {
+  if (!skyCatalogueReady.stars) {
     toast('Star catalogue unavailable — showing Sun, Moon, planets and satellites only.');
-  } else if (figures) {
+  }
+  if (skyCatalogueReady.figures) {
     // Only meaningful once the figures exist; the checkbox starts checked.
     skyView.setConstellationsVisible($('sky-constellations').checked);
   }
@@ -242,7 +253,11 @@ async function toggleDeviceOrientation() {
   if (skyView.isSensorDriven()) {
     skyView.disableDeviceOrientation();
   } else if (!await skyView.enableDeviceOrientation()) {
-    toast('Device orientation unavailable — permission denied, or this device has no compass.');
+    // Three ways to land here: permission refused, no sensor, or the browser
+    // only offers orientation relative to where the device started — which is
+    // useless for aiming at the sky, so it is declined rather than faked.
+    toast('Device orientation unavailable — permission refused, no compass, or this '
+      + 'browser only reports relative orientation.');
   }
   syncSensorButton();
 }

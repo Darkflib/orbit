@@ -20,9 +20,17 @@ The tests state the convention physically: *hold the device like this, you must
 be looking there*.
 
 - `deviceorientationabsolute` where available (Earth-referenced); plain
-  `deviceorientation` only as an iOS fallback, where `webkitCompassHeading`
-  makes it absolute. Android's relative alpha would otherwise silently give a
-  sky anchored to wherever the phone happened to start.
+  `deviceorientation` only where it proves to be absolute. **Whether the plain
+  event is Earth-referenced cannot be feature-detected** — it can only be read
+  off an actual event (`webkitCompassHeading`, or the spec's `absolute` flag) —
+  so enabling now waits for one real event and declines if it turns out to be
+  relative. Committing without that check is worse than not offering the
+  feature: a relative alpha anchors the sky to whichever way the phone happened
+  to face when the listener attached, while the UI claims the compass is live
+  and drag is disabled. Silently wrong, with nothing to tell the user.
+  (Caught in review by Codex on PR #21 — the first draft documented this
+  intent in the worklog but only implemented the `deviceorientationabsolute`
+  half, so every non-absolute browser would have taken the bad path.)
 - iOS 13+ permission is requested from the click handler, since it needs a user
   gesture.
 - Drag is inert while the sensors drive, and leaving Sky mode releases the
@@ -171,6 +179,46 @@ display.
   select whatever sat under the cursor in the hidden view. It is explicitly
   skipped rather than left to guess; sky picking needs its own raycast.
 - **Star colour.** `stars.json` carries no B−V, so every star renders white.
+## 2026-08-05 — Deploy race: `static.yml` was overwriting fresh enrichment data
+
+`static.yml` uploads the whole tree (`path: '.'`) on every push to `main`, and
+`enrich.yml` never commits its freshly built `data/` back to `main` — it deploys
+it and publishes a copy to the orphan `enrichment-data` branch. The committed
+`data/` was therefore a permanently stale seed, and *any* code or docs push
+re-deployed it over the live site, rolling the catalogue back until the next
+daily enrich run.
+
+The shared `concurrency: pages` group made the two deploys serialise, which is
+why this looked handled. Ordering was never the problem: whenever `static.yml`
+ran it shipped stale data, regardless of when it ran relative to enrich.
+
+### What landed
+- **`static.yml` overlays `data/` from `enrichment-data` before uploading**, so a
+  code-only deploy carries the newest published catalogue instead of the seed. It
+  falls back to the committed seed when the branch is absent or carries no
+  `data/manifest.json`, and only drops the seed once the replacement tree is
+  confirmed present — a first deploy or a broken branch still ships working data
+  rather than none.
+- **`enrich.yml` no longer reports a failed push as "no enrichment change".** The
+  old `commit && push || echo` swallowed push failures as a clean no-op. That was
+  tolerable when the branch was just a history log; now that it feeds static
+  deploys, the step tests the staged diff so a genuine no-op and a failed push are
+  distinguishable in the log. It stays `continue-on-error` — getting fresh data
+  onto the site matters more than recording it, and the next run repairs the branch.
+- **`sync-data-seed.yml` (new) fast-forwards the committed seed monthly** from
+  `enrichment-data`. The seed still matters for local dev (`node serve.mjs` on a
+  fresh clone) and as `static.yml`'s fallback, so letting it drift forever was the
+  remaining weakness. It refuses to move the seed backwards (ISO-timestamp compare,
+  so a rolled-back or force-pushed branch can't regress `main`), commits with
+  `[skip ci]` because the site already serves exactly those bytes, and rebases
+  rather than forces if a push lands on `main` mid-run.
+
+### Why monthly is affordable
+`write.mjs` emits `data/` deterministically — sorted keys and records, no per-run
+timestamp outside `manifest.json` — so consecutive snapshots delta well. Measured
+on the real tree: a history carrying two complete 26 MB `data/` trees packs to
+~2.5 MB, and adding a snapshot moved the pack by less than repack noise. Daily
+commits would still be needless churn on `main`; monthly bounds the drift without it.
 
 ## 2026-08-05 — Topocentric alt/az for the observer sky (stars, Sun, Moon, planets)
 

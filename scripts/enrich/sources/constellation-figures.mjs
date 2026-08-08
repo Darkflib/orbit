@@ -43,6 +43,11 @@ export const licence =
 // to, and it keeps the artifact small.
 const round = (v) => Math.round(v * 1e4) / 1e4;
 
+// A coordinate must already be a finite number. Deliberately not `Number(v)`:
+// `Number(null)` is 0, so a null in the source would silently become RA 0° —
+// a real point on the sky, in the wrong place, with nothing to flag it.
+const coord = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
 // Load and normalise into a Map<constellationId, { id, lines }>, where `lines`
 // is an array of polylines and each polyline is a flat [ra, dec, ra, dec, ...]
 // run. Flat pairs rather than nested [ra, dec] tuples: the renderer walks them
@@ -75,19 +80,32 @@ export async function load(_http, { path = VENDOR } = {}) {
       // A single point draws nothing — drop it rather than emit a degenerate run.
       if (!Array.isArray(polyline) || polyline.length < 2) continue;
       const flat = [];
+      let malformed = false;
       for (const point of polyline) {
-        const ra = Number(point?.[0]);
-        const dec = Number(point?.[1]);
-        if (!Number.isFinite(ra) || !Number.isFinite(dec)) continue;
+        const ra = coord(point?.[0]);
+        const dec = coord(point?.[1]);
+        // Drop the whole polyline rather than skip the bad point: skipping would
+        // join that point's neighbours with a segment that is not in the source,
+        // inventing a line rather than losing one.
+        if (ra === null || dec === null) { malformed = true; break; }
         flat.push(round(ra < 0 ? ra + 360 : ra), round(dec));
       }
-      if (flat.length >= 4) { // at least two points
+      if (!malformed && flat.length >= 4) { // at least two points
         lines.push(flat);
         segments += flat.length / 2 - 1;
       }
     }
 
-    if (lines.length) records.set(key, { id: key, lines });
+    // Serpens is the reason this merges rather than assigns: it is the one
+    // constellation split into two disjoint halves (Caput and Cauda), and the
+    // source carries it as two Features sharing `id: "Ser"`. A plain
+    // `records.set` drops the first half while the segment count still counts
+    // it — the artifact silently loses a constellation's worth of lines.
+    if (lines.length) {
+      const existing = records.get(key);
+      if (existing) existing.lines.push(...lines);
+      else records.set(key, { id: key, lines });
+    }
   }
 
   return { records, meta: { ok: true, vendored: true, segments } };

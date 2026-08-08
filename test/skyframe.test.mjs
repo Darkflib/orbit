@@ -160,6 +160,10 @@ test('isSunlitScene agrees with visibility.js satSunlit', () => {
   const len = Math.hypot(sunEci.x, sunEci.y, sunEci.z);
   const sunUnit = { x: sunEci.x / len, y: sunEci.y / len, z: sunEci.z / len };
   const [ux, uy, uz] = ecefToScene(satellite.eciToEcf(sunUnit, gmst));
+  // `ecefToScene` divides by KM_PER_UNIT and this multiplies it straight back —
+  // deliberately. The cancellation leaves the Sun direction a *unit* vector on
+  // the scene axes, which is what isSunlitScene's dot/perpendicular test
+  // requires. "Tidy away" either half and the shadow test silently misclassifies.
   const sunScene = { x: ux * KM_PER_UNIT, y: uy * KM_PER_UNIT, z: uz * KM_PER_UNIT };
 
   const sats = [

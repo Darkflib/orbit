@@ -326,12 +326,17 @@ export function createSkyView(renderer, canvas) {
   }
 
   function updateSats(field, sunSceneDir) {
-    if (!field || !field.count || !toSky) { sats.setCount(0); return; }
+    // Clearing `satCount` alongside the draw range matters: the resize below is
+    // guarded on the count *changing*, so leaving it set would mean a field that
+    // comes back with the same count never re-enters that branch, never calls
+    // setCount again, and the sky stays permanently empty. Reachable by clearing
+    // and restoring the observer, which takes `toSky` to null and back.
+    if (!field || !field.count || !toSky) { satCount = 0; sats.setCount(0); return; }
 
     const src = field.geometry.getAttribute('position');
     const colAttr = field.geometry.getAttribute('aColor');
     const visAttr = field.geometry.getAttribute('aVisible');
-    if (!src || !colAttr || !visAttr) { sats.setCount(0); return; }
+    if (!src || !colAttr || !visAttr) { satCount = 0; sats.setCount(0); return; }
 
     if (satCount !== field.count) {
       satCount = field.count;
@@ -417,6 +422,10 @@ export function createSkyView(renderer, canvas) {
   }
 
   function onPointerUp(e) {
+    // Only release what we actually captured: `onPointerDown` returns early when
+    // the view is inactive or the sensors are driving, so those taps never took
+    // a capture and have nothing to hand back.
+    if (!dragging) return;
     dragging = false;
     canvas.releasePointerCapture?.(e.pointerId);
   }
@@ -435,6 +444,10 @@ export function createSkyView(renderer, canvas) {
   // when that field is present.
   const ABSOLUTE_EVENT = 'deviceorientationabsolute';
   const FALLBACK_EVENT = 'deviceorientation';
+  // How long to wait for one plain `deviceorientation` event before deciding the
+  // fallback is unusable. Sensor events fire at tens of hertz once they start,
+  // so anything this slow means they are not coming.
+  const PROBE_MS = 1500;
   let sensorEvent = null;
 
   function screenAngle() {
@@ -456,6 +469,9 @@ export function createSkyView(renderer, canvas) {
   // events behind a permission prompt that must be triggered by a user gesture,
   // which is why this is async and called straight from a click handler.
   async function enableDeviceOrientation() {
+    // Idempotent: there is an await below, so a double-tap could otherwise get
+    // two listeners registered against one `sensorEvent` and leak the first.
+    if (sensorDriven) return true;
     const DOE = window.DeviceOrientationEvent;
     if (!DOE) return false;
     if (typeof DOE.requestPermission === 'function') {
@@ -465,10 +481,45 @@ export function createSkyView(renderer, canvas) {
         return false; // not a user gesture, or the user dismissed it
       }
     }
-    sensorEvent = 'ondeviceorientationabsolute' in window ? ABSOLUTE_EVENT : FALLBACK_EVENT;
+    if ('ondeviceorientationabsolute' in window) {
+      sensorEvent = ABSOLUTE_EVENT;
+    } else {
+      // Whether plain `deviceorientation` is Earth-referenced cannot be feature
+      // detected — it can only be read off an actual event. Committing without
+      // checking is worse than not offering the feature: a relative alpha
+      // anchors the sky to whatever direction the phone happened to be facing
+      // when the listener attached, while the UI claims the compass is live and
+      // drag is disabled. Silently wrong, and no way for the user to tell.
+      if (!await probePlainEventIsAbsolute()) return false;
+      sensorEvent = FALLBACK_EVENT;
+    }
     window.addEventListener(sensorEvent, onDeviceOrientation, true);
     sensorDriven = true;
     return true;
+  }
+
+  // Resolves true only if a real `deviceorientation` event arrives carrying an
+  // Earth-referenced heading — iOS's `webkitCompassHeading`, or the spec's own
+  // `absolute` flag.
+  function probePlainEventIsAbsolute() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        window.removeEventListener(FALLBACK_EVENT, onProbe, true);
+        resolve(ok);
+      };
+      const onProbe = (e) => {
+        // Some browsers emit an initial all-null event before the sensor warms
+        // up; that one says nothing either way, so keep waiting.
+        if (e.alpha == null) return;
+        finish(e.webkitCompassHeading != null || e.absolute === true);
+      };
+      const timer = setTimeout(() => finish(false), PROBE_MS);
+      window.addEventListener(FALLBACK_EVENT, onProbe, true);
+    });
   }
 
   function disableDeviceOrientation() {
