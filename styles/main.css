@@ -119,8 +119,10 @@ html, body {
 .panel.collapsed .panel-section { display: none; }
 /* The reentry watch list is force-shown in reentry mode by a more specific,
    id-bearing rule (body.mode-reentry #reentry-section), so the generic collapse
-   rule above can't hide it. Override with matching specificity. */
-.panel.collapsed #reentry-section { display: none; }
+   rule above can't hide it. Override with matching specificity. The sky panel
+   is force-shown the same way and needs the same override. */
+.panel.collapsed #reentry-section,
+.panel.collapsed #sky-section { display: none; }
 
 .panel-section {
   padding: 12px 14px;
@@ -343,12 +345,75 @@ html, body {
 .modeswitch button:hover { color: var(--text); }
 .modeswitch button.active { background: var(--accent-dim); color: var(--accent); }
 #mode-reentry.active { background: rgba(255, 77, 77, 0.16); color: #ff7a7a; }
+#mode-sky.active { background: rgba(140, 130, 255, 0.18); color: #b9b2ff; }
 
 /* Mode-scoped panel sections: show only what belongs to the active mode. */
-#reentry-section { display: none; }
+#reentry-section, #sky-section { display: none; }
 body.mode-reentry #layers,
 body.mode-reentry #tracker-actions { display: none; }
 body.mode-reentry #reentry-section { display: block; }
+body.mode-sky #layers,
+body.mode-sky #tracker-actions { display: none; }
+body.mode-sky #sky-section { display: block; }
+
+/* ---------- Sky panel ---------- */
+.sky-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.sky-look {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.sky-look dt {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sky-look dd {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.sky-legend {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.sky-legend span { display: flex; align-items: center; gap: 7px; }
+.sky-legend .dot-star,
+.sky-legend .dot-body,
+.sky-legend .dot-sat,
+.sky-legend .dot-sat-dim {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.sky-legend .dot-star { background: #ffffff; }
+.sky-legend .dot-body { background: #ffd24a; }
+.sky-legend .dot-sat { background: #38f5c8; }
+.sky-legend .dot-sat-dim { background: #38f5c8; opacity: 0.32; }
+.sky-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.sky-check input { accent-color: var(--accent); cursor: pointer; }
+.sky-sensor-note { margin-top: 10px; }
+#sky-compass.active { background: var(--accent-dim); color: var(--accent); }
 
 /* ---------- Reentry list ---------- */
 .reentry-note {

@@ -94,6 +94,28 @@ export async function writeStars(dataDir, records, meta) {
   return stars.length;
 }
 
+// Constellation figure lines, the companion sky artifact to stars.json. Kept in
+// its own file rather than folded into that one because the two are fetched
+// independently: the sky view needs stars to be useful and lines only if the
+// viewer wants them, so a toggle should not have to pull the star catalogue
+// again. Written unconditionally, for the same reason as writeStars — a build
+// with the source missing leaves a well-formed empty file, never a stale one.
+export async function writeConstellations(dataDir, records, meta) {
+  const skyDir = join(dataDir, 'sky');
+  await mkdir(skyDir, { recursive: true });
+  // Sorted by id so record order is stable across builds — a Map's insertion
+  // order would otherwise follow the source file. Note this makes the *ordering*
+  // deterministic, not the whole file: `generatedAt` still changes every build,
+  // matching stars.json, which is the more useful consistency here.
+  const constellations = Array.from(records.values()).sort((a, b) => a.id.localeCompare(b.id));
+  await writeFile(join(skyDir, 'constellations.json'), stringify({
+    schemaVersion: 1,
+    generatedAt: meta.generatedAt,
+    constellations,
+  }));
+  return constellations.length;
+}
+
 // Regenerate the attribution file from each adapter's declared licence.
 export async function writeSources(repoRoot, licences) {
   const body = [

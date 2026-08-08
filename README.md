@@ -51,6 +51,19 @@ coverage footprint.
   time-to-reentry, and selecting one shows its predicted reentry time,
   countdown, and coordinates. These are SGP4 estimates — indicative of the
   trend, not authoritative reentry forecasts.
+- **Sky mode.** The same sky you'd see standing at your location and looking up:
+  ~900 stars to magnitude 4.5 from the Bright Star Catalogue, constellation
+  figures, the Sun, Moon and five naked-eye planets, and every tracked satellite
+  currently above your horizon — satellites in Earth's shadow are dimmed, since
+  without sunlight on them they are far less likely to be visible. Drag to look
+  around, scroll to zoom, click a satellite to select it. On a phone, **Point
+  with device** hands the camera to the orientation sensors so you can hold it up
+  and find things; the scene is built in the observer's horizontal
+  (altitude/azimuth) frame, which is exactly what those sensors report in.
+  Compass bearings are **magnetic and not corrected for declination**, so they
+  can be materially offset from true north — a degree or two in the UK, but 20°
+  or more at high latitudes. Needs a location set in Settings; it never leaves
+  the device.
 
 ## Running it
 
