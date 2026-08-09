@@ -155,7 +155,11 @@
   <aside id="panel-right" class="panel hidden">
     <div class="panel-header">
       <h2 id="sel-name">—</h2>
-      <button id="sel-close" class="collapse-btn" title="Deselect">×</button>
+      <div class="panel-header-actions">
+        <button id="toggle-right" class="collapse-btn" title="Collapse"
+                aria-expanded="true" aria-controls="panel-right">–</button>
+        <button id="sel-close" class="collapse-btn" title="Deselect">×</button>
+      </div>
     </div>
     <div class="panel-body">
       <dl class="readout">

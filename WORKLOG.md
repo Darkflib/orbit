@@ -19,7 +19,14 @@ and timebar, filled the viewport from y=56 to y=823.
   The whole header is the tap target, not the 24px button — the buttons inside
   keep their own meaning, so `×` still deselects rather than collapsing.
 - **The layers sheet stacks above the selection sheet** (`body.has-selection`),
-  so both handles stay reachable rather than one hiding the other.
+  and when a sheet is *expanded* the other's handle lifts clear of it
+  (`body.sheet-expanded`) rather than being covered — so switching sheets stays
+  one tap instead of collapse-then-open. The lift and the sheet height are both
+  driven by `--sheet-max`, so they cannot drift apart.
+- **Keyboard parity.** The header tap is a mobile convenience, not the only
+  route: `#toggle-left` already existed and `#toggle-right` is new, so both
+  sheets have a focusable control with `aria-expanded` kept in sync by the one
+  function that changes collapsed state.
 - **Topbar trimmed** from 616px of content in a 412px viewport to exactly 412:
   brand hidden (the mode tabs identify the app), fps and cache pills dropped,
   the settings label reduced to its icon, and the satellite count switched to a
@@ -46,11 +53,25 @@ and the no-mutual-collapse behaviour all verified identical.
   `#panel-left { top: 64px }` is an id selector and wins — so the sheets stayed
   stretched from the topbar to the bottom, i.e. full height, the exact opposite
   of the intent. Measured 71% and looked wrong; fixed by addressing the ids.
-- **Temporal dead zone, again.** `wireControls()` runs in the boot block and
-  reaches `MOBILE_MQ` and `satCount` through `applySheetDefaults`, so declaring
-  them beside their functions lower in the file would have thrown at startup —
-  the third time this file's boot order has caught something. Both are now
-  declared with the other boot-time state, next to `MODE_TITLES`.
+- **Temporal dead zone, again — twice.** `wireControls()` runs in the boot block
+  and reaches `MOBILE_MQ` and `satCount` through `applySheetDefaults`, so
+  declaring them beside their functions lower in the file threw at startup.
+  Then the review fix reintroduced it with a `SHEET_TOGGLE` lookup const, which
+  broke boot a second time. That is the third and fourth time this file's boot
+  order has caught something, so the panel→button mapping is now derived inline
+  rather than held in a module-level const that could sit in the dead zone.
+
+### From review (CodeRabbit and Codex, both landing on the same two points)
+- **The header listener ran at every breakpoint**, so on desktop clicking a
+  panel header — including the satellite name in the selection panel — collapsed
+  it. A real behaviour change, and against this change's own stated goal of
+  leaving desktop alone: the desktop check verified geometry but never clicked a
+  header. Now gated to mobile, and the check clicks both headers.
+- **No keyboard route to expand the selection sheet.** `#panel-right` had only
+  `×` (deselect), so a keyboard or switch user who collapsed it could not
+  reopen it without deselecting and reselecting. Hence `#toggle-right`.
+- **An expanded sheet covered the other handle** — addressed with the lift
+  above, rather than by retracting the claim that both stay reachable.
 
 ### Follow-up
 - **CelesTrak mirror.** After the outage on the 8th. The mirror itself will be a

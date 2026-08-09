@@ -830,9 +830,15 @@ function wireControls() {
   // on a touch screen. The buttons inside keep their own meaning (× deselects
   // rather than collapsing), hence the guard.
   $('toggle-left').addEventListener('click', () => toggleSheet('panel-left'));
+  $('toggle-right').addEventListener('click', () => toggleSheet('panel-right'));
   for (const id of ['panel-left', 'panel-right']) {
     $(id).querySelector('.panel-header').addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
+      // Mobile only. On desktop the header is a title bar, and swallowing
+      // clicks on it — including on the satellite name in the selection
+      // panel — would be a behaviour change this work is meant to avoid.
+      // Keyboard users get the same control through the buttons above, which
+      // is why the header is a convenience rather than the only route.
+      if (!isMobile() || e.target.closest('button')) return;
       toggleSheet(id);
     });
   }
@@ -846,18 +852,37 @@ function wireControls() {
 // nothing here applies. See the mobile block in styles/main.css.
 // (MOBILE_MQ / isMobile are declared with the boot-time state near the top.)
 
+// The single place a sheet's collapsed state changes, so the toggle button's
+// `aria-expanded` can never drift from what is actually on screen.
+//
+// The panel -> button mapping is derived inline rather than held in a
+// module-level const: this runs during boot (wireControls -> applySheetDefaults),
+// where anything declared further down the file is still in its temporal dead
+// zone. That trap has now bitten this file four times.
+function setSheetCollapsed(id, collapsed) {
+  $(id).classList.toggle('collapsed', collapsed);
+  const btn = $(id === 'panel-left' ? 'toggle-left' : 'toggle-right');
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.title = collapsed ? 'Expand' : 'Collapse';
+  // Lets the mobile CSS lift the other handle clear of an expanded sheet.
+  document.body.classList.toggle(
+    'sheet-expanded',
+    ['panel-left', 'panel-right'].some(
+      (p) => !$(p).classList.contains('collapsed') && !$(p).classList.contains('hidden'),
+    ),
+  );
+}
+
 function openSheet(id) {
-  $(id).classList.remove('collapsed');
+  setSheetCollapsed(id, false);
   // One at a time: the whole point of the change is that two open panels left
   // 13% of the viewport showing the sky.
-  if (isMobile()) {
-    $(id === 'panel-left' ? 'panel-right' : 'panel-left').classList.add('collapsed');
-  }
+  if (isMobile()) setSheetCollapsed(id === 'panel-left' ? 'panel-right' : 'panel-left', true);
 }
 
 function toggleSheet(id) {
   if ($(id).classList.contains('collapsed')) openSheet(id);
-  else $(id).classList.add('collapsed');
+  else setSheetCollapsed(id, true);
 }
 
 // Called at boot and whenever the breakpoint is crossed (rotation, resize), so
@@ -865,8 +890,8 @@ function toggleSheet(id) {
 // panel from a narrow window.
 function applySheetDefaults() {
   const mobile = isMobile();
-  $('panel-left').classList.toggle('collapsed', mobile);
-  $('panel-right').classList.toggle('collapsed', mobile);
+  setSheetCollapsed('panel-left', mobile);
+  setSheetCollapsed('panel-right', mobile);
   updateStats(satCount); // the pill uses a shorter form when space is tight
 }
 

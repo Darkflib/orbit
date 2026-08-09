@@ -113,6 +113,10 @@ html, body {
   border-radius: 6px;
 }
 .collapse-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.collapse-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Collapse and close sit together on the selection panel; the header itself is
+   space-between, so they need their own group to stay adjacent. */
+.panel-header-actions { display: flex; align-items: center; gap: 2px; flex: none; }
 
 .panel-body { padding: 12px 14px; overflow-y: auto; }
 .panel.collapsed .panel-body,
@@ -599,7 +603,7 @@ body.mode-sky #sky-section { display: block; }
     left: 8px;
     right: 8px;
     width: auto;
-    max-height: 62vh;
+    max-height: var(--sheet-max);
     bottom: calc(var(--timebar-h) + var(--sheet-gap));
     border-radius: 14px;
     transition: bottom 0.2s ease;
@@ -609,8 +613,17 @@ body.mode-sky #sky-section { display: block; }
   body.has-selection #panel-left {
     bottom: calc(var(--timebar-h) + var(--sheet-peek) + var(--sheet-gap) * 2);
   }
-  /* Whichever sheet is open sits over the other's handle rather than being
-     clipped by it. */
+  /* An expanded sheet would otherwise grow straight over the other panel's
+     handle, so switching sheets would mean collapsing one before the other
+     became tappable. Instead the collapsed handle rides on top of the open
+     sheet and stays a single tap away. `--sheet-max` is the sheet height the
+     lift is measured against, so the two cannot drift apart. */
+  #panel-left,
+  #panel-right { --sheet-max: 62vh; }
+  body.sheet-expanded #panel-left.collapsed {
+    bottom: calc(var(--sheet-max) + var(--timebar-h) + var(--sheet-gap) * 2);
+  }
+  .panel.collapsed { z-index: 25; }   /* handles stay above an open sheet */
   .panel:not(.collapsed) { z-index: 24; }
 
   /* Standard bottom-sheet grabber, so the header reads as draggable/tappable. */
