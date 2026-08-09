@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "version": "1.0.0",
-  "description": "Real-time 3D visualization of satellite trajectories from CelesTrak TLE data with in-browser SGP4 propagation.",
+  "description": "Real-time 3D visualization of satellite trajectories from cached CelesTrak OMM data with in-browser SGP4 propagation.",
   "type": "module",
   "scripts": {
     "start": "node serve.mjs",

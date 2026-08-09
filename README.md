@@ -1,13 +1,14 @@
 # Orbit — Real-time 3D Satellite Tracker
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![No backend](https://img.shields.io/badge/backend-none-success.svg)
+![Static app](https://img.shields.io/badge/app-static-success.svg)
 ![No build step](https://img.shields.io/badge/build-none-success.svg)
 ![Data: CelesTrak](https://img.shields.io/badge/data-CelesTrak-38bdf8.svg)
 
 A frontend-only, real-time 3D visualization of the world's active satellites.
-It fetches [CelesTrak](https://celestrak.org/) orbital elements once — as OMM
-(Orbit Mean-Elements Message) records in JSON — then uses
+It fetches [CelesTrak](https://celestrak.org/) orbital elements through a small,
+independently hosted static cache — as OMM (Orbit Mean-Elements Message) records
+in JSON — then uses
 [satellite.js](https://github.com/shashwatak/satellite-js) (an SGP4
 implementation) to propagate every satellite's position **directly in the
 browser** — so thousands of satellites move continuously, frame by frame, with
@@ -23,9 +24,10 @@ coverage footprint.
 
 ## Highlights
 
-- **No backend, no API key, no rate limits.** All data comes from CelesTrak's
-  public GP endpoint (CORS-enabled). Elements are cached in `localStorage`
-  (compactly encoded) and only refetched every 2 hours.
+- **Static and resilient.** The app reads atomically published files from
+  `orbit-data.mikepreston.org`, then caches elements compactly in
+  `localStorage`. If the mirror is unavailable it falls back to CelesTrak
+  directly, and if both are unavailable it uses the last browser-cached copy.
 - **OMM, not legacy TLE.** CelesTrak exhausted 5-digit catalog numbers in 2026;
   new objects (6-digit IDs) are no longer published as TLEs. Orbit uses the OMM
   JSON format via `satellite.js` `json2satrec`, so it keeps working as the
@@ -80,15 +82,20 @@ python3 -m http.server 8080
 npx serve .
 ```
 
-Then open the printed URL. The first load fetches GP data from CelesTrak
-(a few seconds); subsequent loads use the 2-hour cache.
+Then open the printed URL. The first load fetches GP data from the Orbit Data
+mirror (normally a few seconds); subsequent loads use the 2-hour browser cache.
 
 ## How it works
 
-```
-CelesTrak OMM (JSON)  ──fetch (≤ once / 2h)──►  localStorage cache (compact)
-     │
-     ▼
+```text
+scheduled CelesTrak OMM fetch ──► Orbit Data static mirror
+                                          │
+                         browser fetch (≤ once / 2h)
+                                          │
+                                          ▼
+                              localStorage cache (compact)
+                                          │
+                                          ▼
  parse + validate (satellite.js json2satrec)  ──►  Web Worker (holds SGP4 satrecs)
      │                                        │
      │   each animation frame: sim time ──────┘
@@ -97,9 +104,11 @@ CelesTrak OMM (JSON)  ──fetch (≤ once / 2h)──►  localStorage cache (
  Three.js point cloud  ◄──── ECI→ECEF→scene positions (Float32Array, transferable)
 ```
 
-- **`src/gp.js`** — fetches CelesTrak groups (and the `SPECIAL=DECAYING` set) as
-  OMM JSON, normalises records, dedupes by NORAD id, and handles compact caching
-  with stale-cache fallback.
+- **`src/gp.js`** — fetches mirrored CelesTrak groups (and the
+  `SPECIAL=DECAYING` set) as OMM JSON, normalises records, dedupes by NORAD id,
+  and handles direct-upstream and compact browser-cache fallbacks.
+- **`src/data.js`** — loads enrichment and sky files from the static mirror,
+  falling back to the snapshot bundled with the app.
 - **`src/reentry.js`** — the reentry mode: SGP4 forward-propagation to an
   estimated decay epoch and sub-satellite impact point, plus the estimated-location
   markers drawn on the globe.
@@ -159,7 +168,8 @@ bright enough to see.
 
 ## Data & attribution
 
-- Orbital elements: [CelesTrak](https://celestrak.org/) (Dr. T.S. Kelso).
+- Orbital elements: [CelesTrak](https://celestrak.org/) (Dr. T.S. Kelso), cached
+  and served by [Orbit Data](https://orbit-data.mikepreston.org/).
 - Propagation: [satellite.js](https://github.com/shashwatak/satellite-js).
 - Sun / Moon / planet ephemerides and star coordinate transforms:
   [Astronomy Engine](https://github.com/cosinekitty/astronomy).

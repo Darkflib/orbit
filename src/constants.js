@@ -15,15 +15,32 @@ export const RAD2DEG = 180 / Math.PI;
 export const GP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const GP_CACHE_PREFIX = 'orbit.gp.';
 
+// Static first-party data mirror. The browser tries this origin before talking
+// to upstream providers, while keeping direct CelesTrak and bundled catalogue
+// data as emergency fallbacks during deployment or a mirror outage.
+export const ORBIT_DATA_ORIGIN = 'https://orbit-data.mikepreston.org';
+export const ORBIT_DATA_GP_URL = (dataset) =>
+  `${ORBIT_DATA_ORIGIN}/v1/gp/${dataset}.json`;
+export const ORBIT_DATA_CATALOG_URL = (path) =>
+  `${ORBIT_DATA_ORIGIN}/v1/data/${path}`;
+
 // Per-fetch network timeout. Without it a single stalled CelesTrak group holds
 // the `Promise.allSettled` in `fetchLayers` open indefinitely and the app sits
 // on the loading screen. On timeout the request is aborted and falls back to a
 // stale cache when one exists (otherwise it surfaces as a normal fetch error).
 export const GP_FETCH_TIMEOUT_MS = 15 * 1000; // 15 seconds
 
-// The decaying set changes far faster than the general catalog (perigee drops
-// by tens of km per day near reentry), so it is refetched more aggressively.
-export const REENTRY_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+// Fail over from the mirror promptly. The upstream timeout remains longer
+// because CelesTrak can legitimately take more time to generate large groups.
+export const ORBIT_DATA_FETCH_TIMEOUT_MS = 5 * 1000; // 5 seconds
+
+// A last-known-good mirror response remains usable indefinitely, but data this
+// old is called out in the UI so users know propagation accuracy is degrading.
+export const GP_REMOTE_STALE_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+// The decaying set changes quickly, but the upstream minimum interval and the
+// mirror's atomic publication cadence are two hours for every GP dataset.
+export const REENTRY_MAX_AGE_MS = GP_MAX_AGE_MS;
 
 // CelesTrak general-perturbations endpoint. CORS-enabled, no key required.
 // We request OMM in JSON: the legacy TLE format cannot represent the 6-digit

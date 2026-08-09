@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { createScene } from './scene.js';
 import { SatelliteField } from './satellites.js';
 import { fetchLayers, fetchDecaying } from './gp.js';
+import { fetchDataJson } from './data.js';
 import { LAYERS, LAYER_BY_ID, SPEEDS, TIME_SKIPS, EARTH_RADIUS } from './constants.js';
 import { sunDirectionScene, sunDirectionEci, fmtClock, fmtDuration } from './utils.js';
 import { computeVisibility, compass } from './visibility.js';
@@ -112,7 +113,7 @@ setMode('tracker'); // loads the default catalogue
 
 // ---- Data loading ---------------------------------------------------------
 async function loadData(layers, opts = {}) {
-  showLoading('Fetching orbital elements from CelesTrak…');
+  showLoading('Fetching orbital elements…');
   const priorityById = Object.fromEntries(LAYERS.map((l) => [l.id, l.priority]));
   try {
     const { records, fetchedAt, stale, errors } = await fetchLayers(layers, priorityById, opts);
@@ -126,7 +127,7 @@ async function loadData(layers, opts = {}) {
     updateLayerCounts();
     buildSearchIndex();
     if (stale) {
-      toast('Using cached GP data (CelesTrak unreachable — showing last known elements).');
+      toast('Using older GP data — showing the last known orbital elements.');
     } else if (errors.length) {
       toast(`Some layers failed to load: ${errors.slice(0, 2).join('; ')}`);
     }
@@ -134,7 +135,7 @@ async function loadData(layers, opts = {}) {
   } catch (err) {
     hideLoading();
     toast(
-      `Could not load GP data: ${err.message}. CelesTrak may be unreachable, or the ` +
+      `Could not load GP data: ${err.message}. The data services may be unreachable, or the ` +
       `page is opened from file:// (serve it over http and retry).`,
       true,
     );
@@ -210,9 +211,7 @@ async function ensureSkyCatalogues() {
   try {
     await Promise.all(wanted.map(async ([key, path, apply, what]) => {
       try {
-        const res = await fetch(path);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        apply(await res.json());
+        apply(await fetchDataJson(path.replace('./data/', '')));
         skyCatalogueReady[key] = true;
       } catch (err) {
         // Left false so the next entry into Sky mode tries this one again.
@@ -271,7 +270,7 @@ async function toggleDeviceOrientation() {
 
 // Load the decaying-object watch list and derive reentry estimates for it.
 async function loadReentry(opts = {}) {
-  showLoading('Fetching decaying objects from CelesTrak…');
+  showLoading('Fetching decaying objects…');
   try {
     const { records, fetchedAt, stale } = await fetchDecaying(opts);
     if (!records.length) throw new Error('No decaying objects returned.');
@@ -285,12 +284,12 @@ async function loadReentry(opts = {}) {
     updateStats(n);
     buildSearchIndex();
     if (stale) {
-      toast('Using cached decay data (CelesTrak unreachable — showing last known elements).');
+      toast('Using older decay data — showing the last known elements.');
     }
     hideLoading();
   } catch (err) {
     hideLoading();
-    toast(`Could not load decay data: ${err.message}. CelesTrak may be unreachable.`, true);
+    toast(`Could not load decay data: ${err.message}. The data services may be unreachable.`, true);
     console.error(err);
   }
 }

@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Enrichment data access (Tier 1).
 //
-// The enrichment catalogue is a slowly-changing side dataset built by
-// scripts/enrich/ and served same-origin under data/. It is joined to a
+// The enrichment catalogue is a slowly-changing side dataset served by the
+// Orbit Data mirror, with the bundled data/ snapshot as a fallback. It is joined to a
 // satellite lazily, by NORAD id, only when needed — so it never touches the
 // 2-hour GP hot path in gp.js.
 //
@@ -12,9 +12,7 @@
 //   - manifest.json       : build metadata (data age, per-source status).
 // ---------------------------------------------------------------------------
 
-// Resolve against the document base so paths work whether the app is served
-// from a domain root or a project subpath (e.g. GitHub Pages /orbit/).
-const url = (p) => new URL(p, document.baseURI).href;
+import { fetchDataJson } from './data.js';
 
 // Bucket a NORAD id the same way the build job does (write.mjs bucketOf).
 function bucketOf(norad) {
@@ -32,8 +30,7 @@ export async function getEnrichment(norad) {
   const b = bucketOf(norad);
   if (Number.isNaN(b)) return null;
   if (!bucketCache.has(b)) {
-    bucketCache.set(b, fetch(url(`data/enrichment/${b}.json`))
-      .then((r) => (r.ok ? r.json() : {}))
+    bucketCache.set(b, fetchDataJson(`enrichment/${b}.json`)
       .catch(() => ({})));
   }
   const bucket = await bucketCache.get(b);
@@ -43,8 +40,7 @@ export async function getEnrichment(norad) {
 // The lean catalogue index (array), loaded once. Returns [] on failure.
 export async function loadIndex() {
   if (!indexPromise) {
-    indexPromise = fetch(url('data/catalog-index.json'))
-      .then((r) => (r.ok ? r.json() : []))
+    indexPromise = fetchDataJson('catalog-index.json')
       .catch(() => []);
   }
   return indexPromise;
@@ -53,8 +49,7 @@ export async function loadIndex() {
 // Build manifest (data age / per-source status), or null on failure.
 export async function loadManifest() {
   if (!manifestPromise) {
-    manifestPromise = fetch(url('data/manifest.json'))
-      .then((r) => (r.ok ? r.json() : null))
+    manifestPromise = fetchDataJson('manifest.json')
       .catch(() => null);
   }
   return manifestPromise;

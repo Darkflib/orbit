@@ -13,7 +13,8 @@
 // ---------------------------------------------------------------------------
 import {
   CELESTRAK_URL, CELESTRAK_SPECIAL_URL, GP_CACHE_PREFIX, GP_MAX_AGE_MS,
-  GP_FETCH_TIMEOUT_MS, REENTRY_LAYER, REENTRY_MAX_AGE_MS,
+  GP_FETCH_TIMEOUT_MS, GP_REMOTE_STALE_MS, ORBIT_DATA_FETCH_TIMEOUT_MS,
+  ORBIT_DATA_GP_URL, REENTRY_LAYER, REENTRY_MAX_AGE_MS,
 } from './constants.js';
 
 // fetch() + JSON parse under a single hard timeout. A stalled request aborts
@@ -32,7 +33,16 @@ async function fetchJsonWithTimeout(url, opts, timeoutMs) {
   try {
     const res = await fetch(url, { ...opts, signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    const data = await res.json();
+    const receivedAt = Date.now();
+    const lastModified = res.headers?.get?.('last-modified');
+    const parsedLastModified = lastModified ? Date.parse(lastModified) : NaN;
+    return {
+      data,
+      fetchedAt: Number.isNaN(parsedLastModified)
+        ? receivedAt
+        : Math.min(parsedLastModified, receivedAt),
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -48,6 +58,40 @@ const OMM_FIELDS = [
   'MEAN_ANOMALY', 'BSTAR', 'MEAN_MOTION_DOT', 'MEAN_MOTION_DDOT',
   'EPHEMERIS_TYPE', 'CLASSIFICATION_TYPE', 'ELEMENT_SET_NO',
 ];
+
+const OMM_NUMERIC_FIELDS = [
+  'MEAN_MOTION', 'ECCENTRICITY', 'INCLINATION', 'RA_OF_ASC_NODE',
+  'ARG_OF_PERICENTER', 'MEAN_ANOMALY', 'BSTAR', 'MEAN_MOTION_DOT',
+  'MEAN_MOTION_DDOT', 'EPHEMERIS_TYPE', 'ELEMENT_SET_NO',
+];
+
+function validOmmNumber(value) {
+  return value !== '' && value != null && Number.isFinite(Number(value));
+}
+
+// Keep a malformed mirror response from bypassing the upstream fallback and
+// poisoning localStorage. The server performs stricter whole-dataset checks;
+// this browser-side gate covers the fields and physical ranges json2satrec
+// needs for an individual record.
+function isUsableOmm(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  if (!OMM_FIELDS.every((field) => Object.hasOwn(o, field))) return false;
+  if (!OMM_NUMERIC_FIELDS.every((field) => validOmmNumber(o[field]))) return false;
+
+  const norad = Number(o.NORAD_CAT_ID);
+  if (!Number.isInteger(norad) || norad < 1 || norad > 999999999) return false;
+  if (typeof o.EPOCH !== 'string' || Number.isNaN(Date.parse(o.EPOCH))) return false;
+  if (typeof o.CLASSIFICATION_TYPE !== 'string' || !o.CLASSIFICATION_TYPE) return false;
+
+  const meanMotion = Number(o.MEAN_MOTION);
+  const eccentricity = Number(o.ECCENTRICITY);
+  const inclination = Number(o.INCLINATION);
+  if (!(meanMotion > 0 && meanMotion < 20)) return false;
+  if (!(eccentricity >= 0 && eccentricity < 1)) return false;
+  if (!(inclination >= 0 && inclination <= 180)) return false;
+  return ['RA_OF_ASC_NODE', 'ARG_OF_PERICENTER', 'MEAN_ANOMALY']
+    .every((field) => Number(o[field]) >= 0 && Number(o[field]) <= 360);
+}
 
 // Normalise a raw CelesTrak OMM object into our internal record. `omm` holds
 // just the fields json2satrec consumes.
@@ -91,11 +135,11 @@ function readCache(group) {
   }
 }
 
-function writeCache(group, records) {
+function writeCache(group, records, fetchedAt) {
   try {
     localStorage.setItem(
       cacheKey(group),
-      JSON.stringify({ fetchedAt: Date.now(), rows: records.map(recordToRow) }),
+      JSON.stringify({ fetchedAt, rows: records.map(recordToRow) }),
     );
   } catch {
     // Storage may be full (large group over quota) or blocked (private mode).
@@ -103,45 +147,98 @@ function writeCache(group, records) {
   }
 }
 
-// Shared fetch-and-cache core. `cacheName` keys the localStorage entry, `url`
-// is the CelesTrak endpoint and `maxAge` how long a cache entry stays fresh.
-// Returns { records, fetchedAt, fromCache, stale? }.
-async function fetchElements(cacheName, url, maxAge, force, timeoutMs = GP_FETCH_TIMEOUT_MS) {
+// Shared fetch-and-cache core. The static mirror is always preferred; direct
+// CelesTrak access is an emergency fallback, followed by stale localStorage.
+// Returns { records, fetchedAt, fromCache, source, stale? }.
+async function fetchElements(
+  cacheName,
+  mirrorUrl,
+  upstreamUrl,
+  maxAge,
+  force,
+  timeoutMs,
+) {
   const cached = readCache(cacheName);
   const fresh = cached && Date.now() - cached.fetchedAt < maxAge;
 
   if (cached && fresh && !force) {
-    return { records: cached.records, fetchedAt: cached.fetchedAt, fromCache: true };
+    return {
+      records: cached.records,
+      fetchedAt: cached.fetchedAt,
+      fromCache: true,
+      source: 'browser-cache',
+    };
   }
 
-  try {
-    const data = await fetchJsonWithTimeout(url, { mode: 'cors' }, timeoutMs);
-    if (!Array.isArray(data) || data.length === 0) throw new Error('no elements returned');
-    const records = data.map(ommToRecord);
-    writeCache(cacheName, records);
-    return { records, fetchedAt: Date.now(), fromCache: false };
-  } catch (err) {
-    // Network/CORS/parse failure, or a timeout abort — fall back to a stale
-    // cache if we have one.
-    if (cached) {
-      return { records: cached.records, fetchedAt: cached.fetchedAt, fromCache: true, stale: true };
+  const attempts = [
+    {
+      source: 'orbit-data',
+      url: mirrorUrl,
+      timeout: timeoutMs ?? ORBIT_DATA_FETCH_TIMEOUT_MS,
+    },
+    {
+      source: 'celestrak',
+      url: upstreamUrl,
+      timeout: timeoutMs ?? GP_FETCH_TIMEOUT_MS,
+    },
+  ];
+  const failures = [];
+
+  for (const attempt of attempts) {
+    try {
+      const { data, fetchedAt } = await fetchJsonWithTimeout(
+        attempt.url,
+        { mode: 'cors' },
+        attempt.timeout,
+      );
+      if (!Array.isArray(data) || data.length === 0) throw new Error('no elements returned');
+      const records = data.filter(isUsableOmm).map(ommToRecord);
+      if (records.length === 0) throw new Error('no usable elements returned');
+      writeCache(cacheName, records, fetchedAt);
+      return {
+        records,
+        fetchedAt,
+        fromCache: false,
+        source: attempt.source,
+        stale: Date.now() - fetchedAt >= GP_REMOTE_STALE_MS,
+      };
+    } catch (error) {
+      failures.push(`${attempt.source}: ${error.message}`);
     }
-    throw err;
   }
+
+  if (cached) {
+    return {
+      records: cached.records,
+      fetchedAt: cached.fetchedAt,
+      fromCache: true,
+      source: 'browser-cache',
+      stale: true,
+    };
+  }
+  throw new Error(`GP data unavailable (${failures.join('; ')})`);
 }
 
 // Fetch one CelesTrak group, using the cache when it is still fresh.
 // Returns { records, fetchedAt, fromCache }.
 export async function fetchGroup(group, { force = false, timeoutMs } = {}) {
-  return fetchElements(group, CELESTRAK_URL(group), GP_MAX_AGE_MS, force, timeoutMs);
+  return fetchElements(
+    group,
+    ORBIT_DATA_GP_URL(group),
+    CELESTRAK_URL(group),
+    GP_MAX_AGE_MS,
+    force,
+    timeoutMs,
+  );
 }
 
 // Fetch CelesTrak's decaying-objects watch list (SPECIAL=DECAYING). Records are
 // tagged with the reentry layer so the shared satellite field colours them as
-// reentry candidates. Uses a separate, shorter-lived cache than group data.
+// reentry candidates. It follows the same two-hour mirror publication cadence.
 export async function fetchDecaying({ force = false, timeoutMs } = {}) {
   const r = await fetchElements(
     'special.decaying',
+    ORBIT_DATA_GP_URL('special-decaying'),
     CELESTRAK_SPECIAL_URL(REENTRY_LAYER.special),
     REENTRY_MAX_AGE_MS,
     force,
