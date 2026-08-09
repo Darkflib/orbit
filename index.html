@@ -71,7 +71,8 @@
       <span id="stat-sats" class="pill">0 satellites</span>
       <span id="stat-fps" class="pill">– fps</span>
       <span id="stat-source" class="pill" title="Time since TLE data was fetched">cache: –</span>
-      <button id="open-settings" class="pill pill-btn" title="Your location & visibility settings">⚙ Location</button>
+      <button id="open-settings" class="pill pill-btn" aria-label="Location settings"
+              title="Your location & visibility settings">⚙<span class="pill-label"> Location</span></button>
     </div>
   </header>
 
@@ -154,7 +155,11 @@
   <aside id="panel-right" class="panel hidden">
     <div class="panel-header">
       <h2 id="sel-name">—</h2>
-      <button id="sel-close" class="collapse-btn" title="Deselect">×</button>
+      <div class="panel-header-actions">
+        <button id="toggle-right" class="collapse-btn" title="Collapse"
+                aria-expanded="true" aria-controls="panel-right">–</button>
+        <button id="sel-close" class="collapse-btn" title="Deselect">×</button>
+      </div>
     </div>
     <div class="panel-body">
       <dl class="readout">

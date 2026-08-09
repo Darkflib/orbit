@@ -96,6 +96,13 @@ let loadedDataset = null;         // which catalogue the field currently holds
 // carries a warning about above, which this hit for real.
 const MODE_TITLES = { tracker: 'Layers', reentry: 'Reentry watch', sky: 'Sky' };
 
+// Same reason as MODE_TITLES above: wireControls() runs in the boot block below
+// and reaches both of these (via applySheetDefaults), so a `const`/`let`
+// declared further down the file would still be in its temporal dead zone.
+const MOBILE_MQ = window.matchMedia('(max-width: 720px)');
+const isMobile = () => MOBILE_MQ.matches;
+let satCount = 0;   // remembered so the stats pill can be re-rendered on resize
+
 buildLayerToggles();
 buildSpeedButtons();
 buildSkipButtons();
@@ -818,10 +825,74 @@ function wireControls() {
   $('set-clear').addEventListener('click', clearSettings);
   $('vis-set-loc').addEventListener('click', openSettings);
 
-  // Collapse left panel.
-  $('toggle-left').addEventListener('click', () => {
-    $('panel-left').classList.toggle('collapsed');
-  });
+  // Panels collapse to a header. On a phone that header is the bottom-sheet
+  // handle, so the whole thing is the tap target — a 24px button is a poor one
+  // on a touch screen. The buttons inside keep their own meaning (× deselects
+  // rather than collapsing), hence the guard.
+  $('toggle-left').addEventListener('click', () => toggleSheet('panel-left'));
+  $('toggle-right').addEventListener('click', () => toggleSheet('panel-right'));
+  for (const id of ['panel-left', 'panel-right']) {
+    $(id).querySelector('.panel-header').addEventListener('click', (e) => {
+      // Mobile only. On desktop the header is a title bar, and swallowing
+      // clicks on it — including on the satellite name in the selection
+      // panel — would be a behaviour change this work is meant to avoid.
+      // Keyboard users get the same control through the buttons above, which
+      // is why the header is a convenience rather than the only route.
+      if (!isMobile() || e.target.closest('button')) return;
+      toggleSheet(id);
+    });
+  }
+  MOBILE_MQ.addEventListener('change', applySheetDefaults);
+  applySheetDefaults();
+}
+
+// ---- Bottom sheets (mobile) -------------------------------------------------
+// Below the breakpoint the two panels dock to the bottom of the screen and only
+// one is expanded at a time; above it they are the old floating cards and
+// nothing here applies. See the mobile block in styles/main.css.
+// (MOBILE_MQ / isMobile are declared with the boot-time state near the top.)
+
+// The single place a sheet's collapsed state changes, so the toggle button's
+// `aria-expanded` can never drift from what is actually on screen.
+//
+// The panel -> button mapping is derived inline rather than held in a
+// module-level const: this runs during boot (wireControls -> applySheetDefaults),
+// where anything declared further down the file is still in its temporal dead
+// zone. That trap has now bitten this file four times.
+function setSheetCollapsed(id, collapsed) {
+  $(id).classList.toggle('collapsed', collapsed);
+  const btn = $(id === 'panel-left' ? 'toggle-left' : 'toggle-right');
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.title = collapsed ? 'Expand' : 'Collapse';
+  // Lets the mobile CSS lift the other handle clear of an expanded sheet.
+  document.body.classList.toggle(
+    'sheet-expanded',
+    ['panel-left', 'panel-right'].some(
+      (p) => !$(p).classList.contains('collapsed') && !$(p).classList.contains('hidden'),
+    ),
+  );
+}
+
+function openSheet(id) {
+  setSheetCollapsed(id, false);
+  // One at a time: the whole point of the change is that two open panels left
+  // 13% of the viewport showing the sky.
+  if (isMobile()) setSheetCollapsed(id === 'panel-left' ? 'panel-right' : 'panel-left', true);
+}
+
+function toggleSheet(id) {
+  if ($(id).classList.contains('collapsed')) openSheet(id);
+  else setSheetCollapsed(id, true);
+}
+
+// Called at boot and whenever the breakpoint is crossed (rotation, resize), so
+// a phone starts with the sky visible and a desktop never inherits a collapsed
+// panel from a narrow window.
+function applySheetDefaults() {
+  const mobile = isMobile();
+  setSheetCollapsed('panel-left', mobile);
+  setSheetCollapsed('panel-right', mobile);
+  updateStats(satCount); // the pill uses a shorter form when space is tight
 }
 
 function selectIndex(idx, recenter = false) {
@@ -829,6 +900,11 @@ function selectIndex(idx, recenter = false) {
   if (!rec) return;
   skyView.setSelected(idx); // ring the same object in the sky view
   $('panel-right').classList.remove('hidden');
+  // Lets the mobile CSS stack the layers sheet above the selection sheet.
+  document.body.classList.add('has-selection');
+  // Selecting something is a request to see it, so open that sheet — which
+  // collapses the other one.
+  openSheet('panel-right');
   $('sel-name').textContent = rec.name;
   updateInfoLinks(rec);
   showEnrichment(rec.norad);
@@ -851,6 +927,7 @@ function deselect() {
   field.deselect();
   skyView.setSelected(-1);
   $('panel-right').classList.add('hidden');
+  document.body.classList.remove('has-selection');
   $('sel-enrich').classList.add('hidden');
   enrichReqNorad = null;
   selectedEnrichment = null;
@@ -875,7 +952,16 @@ function updateReadout(sel) {
 }
 
 function updateStats(n) {
-  $('stat-sats').textContent = `${n.toLocaleString()} satellites`;
+  satCount = n;
+  // "13,080 satellites" is 110px of a 412px topbar. The short form keeps the
+  // count on screen rather than dropping the pill entirely on a phone.
+  if (!isMobile()) {
+    $('stat-sats').textContent = `${n.toLocaleString()} satellites`;
+  } else {
+    $('stat-sats').textContent = n >= 1000
+      ? `${(n / 1000).toFixed(1)}k sats`
+      : `${n} sats`;
+  }
 }
 
 function updateLayerCounts() {
