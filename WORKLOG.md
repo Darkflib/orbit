@@ -1,5 +1,64 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-09 — Mobile: panels become bottom sheets
+
+Reported after testing Sky mode on a phone: the UI is very cramped. Measured on
+a 412×839 viewport with a satellite selected, it was worse than "cramped" —
+**87% of the screen was chrome**, leaving 13% for the thing the app exists to
+show. The two floating cards stacked vertically and, together with the topbar
+and timebar, filled the viewport from y=56 to y=823.
+
+### What landed
+- **Both panels dock to the bottom as sheets**, collapsed to their header by
+  default, with the standard grabber affordance. The existing
+  `.panel.collapsed` rule already hides the body and sections, so a collapsed
+  panel *is* the handle — no second mechanism was needed, and desktop keeps the
+  identical collapse behaviour it always had.
+- **One expands at a time** (`openSheet`). Selecting a satellite opens its sheet
+  and collapses the other, since selecting something is a request to see it.
+  The whole header is the tap target, not the 24px button — the buttons inside
+  keep their own meaning, so `×` still deselects rather than collapsing.
+- **The layers sheet stacks above the selection sheet** (`body.has-selection`),
+  so both handles stay reachable rather than one hiding the other.
+- **Topbar trimmed** from 616px of content in a 412px viewport to exactly 412:
+  brand hidden (the mode tabs identify the app), fps and cache pills dropped,
+  the settings label reduced to its icon, and the satellite count switched to a
+  short form ("13.1k sats") so it stays visible instead of being dropped.
+- **Timebar** becomes a full-width dock instead of a floating pill, with play,
+  NOW and the clock pinned to the front via flex `order` — previously the clock
+  was pushed off the right edge — and the skip/speed clusters scrolling.
+
+### Measured, on a Pixel 7 (412×839)
+UI coverage as a share of the viewport, by union of the chrome rects:
+
+| state | before | after |
+|---|---|---|
+| at rest | 87% | **19%** |
+| satellite selected, sheet open | 87% | 71% |
+| selected, sheet collapsed | — | **25%** |
+
+So the sky goes from 13% to 81% at rest, and any expanded sheet is one tap from
+75%. Desktop is unchanged: panel geometry, brand, fps pill, full-length count
+and the no-mutual-collapse behaviour all verified identical.
+
+### Two bugs found while building it, both self-inflicted
+- **CSS specificity.** The first version set `top: auto` on `.panel`, but
+  `#panel-left { top: 64px }` is an id selector and wins — so the sheets stayed
+  stretched from the topbar to the bottom, i.e. full height, the exact opposite
+  of the intent. Measured 71% and looked wrong; fixed by addressing the ids.
+- **Temporal dead zone, again.** `wireControls()` runs in the boot block and
+  reaches `MOBILE_MQ` and `satCount` through `applySheetDefaults`, so declaring
+  them beside their functions lower in the file would have thrown at startup —
+  the third time this file's boot order has caught something. Both are now
+  declared with the other boot-time state, next to `MODE_TITLES`.
+
+### Follow-up
+- **CelesTrak mirror.** After the outage on the 8th. The mirror itself will be a
+  separate service the maintainer runs, so nothing is needed here beyond a
+  configurable mirror origin, a fallback when the CelesTrak fetch fails (with a
+  shorter timeout so the failover is not a 15 s stall), and a `connect-src`
+  entry for it in the CSP.
+
 ## 2026-08-08 — Search suggestions: replace the native `<datalist>`
 
 Reported from testing the sky view: on mobile the search box offered no

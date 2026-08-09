@@ -575,16 +575,94 @@ body.mode-sky #sky-section { display: block; }
 .links-row a:hover { background: var(--accent-dim); border-color: var(--accent); }
 
 /* ---------- Mobile ---------- */
+/* ---------- Mobile: panels become bottom sheets ----------
+   Measured on a 412x839 phone, the two floating cards plus the timebar and
+   topbar covered 87% of the viewport — almost none of the thing the app exists
+   to show was visible. Both panels now dock to the bottom, collapsed to their
+   header by default, and only one expands at a time (openSheet in main.js).
+   The existing `.panel.collapsed` rule already hides the body and sections, so
+   a collapsed panel *is* the sheet handle; no second mechanism was needed. */
 @media (max-width: 720px) {
-  .panel { width: calc(100vw - 32px); max-height: 40vh; }
-  #panel-right { top: auto; bottom: 74px; }
-  #panel-left { top: 56px; }
-  .brand .subtle { display: none; }
-  .clock { min-width: 120px; }
-  #stat-source { display: none; }
-  /* The extra skip cluster can exceed a phone's width; let the bar scroll
-     horizontally rather than overflow the viewport. */
-  #timebar { max-width: calc(100vw - 20px); overflow-x: auto; }
+  :root {
+    --timebar-h: 54px;
+    --sheet-peek: 58px;  /* grabber + header: what a collapsed sheet occupies */
+    --sheet-gap: 8px;
+  }
+
+  /* Addressed by id, not `.panel`: the desktop rules `#panel-left { top: 64px }`
+     and `#panel-right { top: 64px }` are id selectors, so a class rule here
+     loses to them and the sheets stay stretched from the topbar to the
+     bottom — full height, which is the opposite of the point. */
+  #panel-left,
+  #panel-right {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: 62vh;
+    bottom: calc(var(--timebar-h) + var(--sheet-gap));
+    border-radius: 14px;
+    transition: bottom 0.2s ease;
+  }
+  /* The selection sheet owns the bottom slot and the layers/sky sheet stacks
+     above it, so both handles stay reachable while something is selected. */
+  body.has-selection #panel-left {
+    bottom: calc(var(--timebar-h) + var(--sheet-peek) + var(--sheet-gap) * 2);
+  }
+  /* Whichever sheet is open sits over the other's handle rather than being
+     clipped by it. */
+  .panel:not(.collapsed) { z-index: 24; }
+
+  /* Standard bottom-sheet grabber, so the header reads as draggable/tappable. */
+  .panel::before {
+    content: '';
+    display: block;
+    flex: none;
+    width: 36px;
+    height: 4px;
+    margin: 8px auto 2px;
+    border-radius: 2px;
+    background: var(--border);
+  }
+  .panel-header { cursor: pointer; padding: 8px 14px 12px; }
+
+  /* --- Topbar: 616px of content in a 412px viewport before this --- */
+  #topbar { gap: 8px; padding: 0 10px; }
+  .brand { display: none; }          /* the mode tabs identify the app */
+  .modeswitch button { padding: 5px 10px; font-size: 0.78rem; white-space: nowrap; }
+  #stat-fps, #stat-source { display: none; }
+  .pill-label { display: none; }     /* "⚙ Location" -> "⚙" */
+  /* Without this the count wraps to two lines and the pill grows a second row. */
+  .pill { white-space: nowrap; }
+
+  /* --- Timebar: full-width dock rather than a floating pill --- */
+  #timebar {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: none;
+    transform: none;
+    height: var(--timebar-h);
+    padding: 0 10px;
+    gap: 10px;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  /* Play, NOW and the clock are pinned to the front so they are always in
+     view; the skip and speed clusters scroll off to the right. Reordering in
+     flex rather than the DOM keeps one source of truth for the markup. */
+  #timebar > * { flex: none; }
+  #btn-play { order: -3; }
+  #btn-now { order: -2; }
+  /* Tightened so more of the skip cluster is reachable before scrolling. */
+  .clock { order: -1; min-width: 0; white-space: nowrap; }
+  #clock-utc { font-size: 0.74rem; }
+  .clock .subtle { font-size: 0.66rem; }
   .skip .field-label, .speed .field-label { display: none; }
 }
 
