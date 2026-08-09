@@ -85,7 +85,7 @@ test('CelesTrak is used only after the mirror fails', async () => {
   const calls = [];
   globalThis.fetch = async (url) => {
     calls.push(url);
-    if (url.includes('orbit-data.mikepreston.org')) {
+    if (url === 'https://orbit-data.mikepreston.org/v1/gp/stations.json') {
       return { ok: false, status: 503, json: async () => ({}) };
     }
     return okResponse();

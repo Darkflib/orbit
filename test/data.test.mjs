@@ -31,7 +31,7 @@ test('catalogue data falls back to the bundled project-subpath snapshot', async 
     baseURI: BASE_URI,
     fetchImpl: async (url) => {
       calls.push(url);
-      if (url.includes('orbit-data.mikepreston.org')) {
+      if (url === 'https://orbit-data.mikepreston.org/v1/data/catalog-index.json') {
         return response({}, { ok: false, status: 503 });
       }
       return response(bundled);
@@ -52,7 +52,7 @@ test('a stalled mirror times out before loading the bundled snapshot', async () 
     timeoutMs: 20,
     fetchImpl: (url, { signal }) => {
       calls.push(url);
-      if (!url.includes('orbit-data.mikepreston.org')) {
+      if (url !== 'https://orbit-data.mikepreston.org/v1/data/manifest.json') {
         return Promise.resolve(response({ bundled: true }));
       }
       return new Promise((_resolve, reject) => {
@@ -71,6 +71,13 @@ test('catalogue errors report both the mirror and bundled fallback', async () =>
       baseURI: BASE_URI,
       fetchImpl: async () => response({}, { ok: false, status: 404 }),
     }),
-    /orbit-data\.mikepreston\.org.*app\.example\/orbit\/data/s,
+    (error) => {
+      assert.equal(
+        error.message,
+        'Data unavailable (https://orbit-data.mikepreston.org/v1/data/sky/stars.json: '
+          + 'HTTP 404; https://app.example/orbit/data/sky/stars.json: HTTP 404)',
+      );
+      return true;
+    },
   );
 });
