@@ -1,5 +1,73 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-08 — Search suggestions: replace the native `<datalist>`
+
+Reported from testing the sky view: on mobile the search box offered no
+suggestions at all, "as if the result box is missing" — and on desktop the
+suggestion list had previously been seen appearing well away from the field.
+Both are the same root cause.
+
+### Why a `<datalist>` could not work here
+The suggestion popup for `<input list=…>` is drawn and positioned by the
+*browser*, and the app has no say in either:
+
+- **Mobile.** iOS Safari renders no datalist suggestion UI. The markup is valid,
+  the options were there, and nothing appeared — exactly the reported symptom.
+- **Desktop placement.** The popup is anchored by the browser to the input. The
+  left panel sets `backdrop-filter`, which establishes a containing block and a
+  stacking context, and that is a well-known way to have the anchor computed
+  against the wrong box. Hence the misplacement seen earlier.
+- The panel also sets `overflow: hidden` and is `max-height: 40vh` on phones, so
+  a dropdown nested beside the input would simply be clipped.
+
+None of this is fixable while the browser owns the widget, so the widget had to go.
+
+### What landed
+- **A hand-rolled combobox.** `#search-results` is a direct child of `<body>` —
+  deliberately, so neither the panel's clipping nor its `backdrop-filter` can
+  reach it — positioned `fixed` from the input's `getBoundingClientRect()` and
+  repositioned on resize and on scroll (capturing, so panel scrolling counts).
+  It flips above the field when there is more room there, which is the common
+  case on a phone with the keyboard up.
+- **Options commit on pointer *up*, and only if the pointer barely moved.** The
+  first attempt committed on `pointerdown` — the obvious way to beat the blur
+  that closes the list — and that was wrong in a way desktop testing could not
+  show: on a phone the first touch of a *swipe* selects whatever is under the
+  finger, so the list cannot be scrolled at all. With 40 matches in a 260 px box
+  that left roughly two-thirds of the results unreachable. (Caught in review by
+  Codex on PR #22; reproduced with synthetic touch events before fixing —
+  a swipe selected the item under the finger and scrolled nothing.)
+  Focus is instead held by a `mousedown` handler on the list that calls
+  `preventDefault()`: `mousedown` is the event that moves focus, and on touch it
+  is a compatibility event fired only after `touchend`, so preventing it holds
+  focus on desktop without suppressing the native scroll gesture the way
+  preventing `pointerdown` does.
+- **Ranked matching over the whole catalogue.** Prefix matches first, then
+  matches anywhere in the name, alphabetical within each tier — so "iss" offers
+  ISS (ZARYA) before something that merely contains the letters. Names are
+  lower-cased once per catalogue load rather than per keystroke.
+- **The 4000-name cap is gone.** The old code built up to 4000 `<option>`
+  elements; matching now scans all ~12k records and only the top 40 reach the
+  DOM.
+- Keyboard support (↑/↓/Enter/Escape) and combobox ARIA, neither of which the
+  datalist gave us any control over. `findByName` (exact match only, and the
+  reason a partial name did nothing even on desktop) is now unused and removed.
+
+### Verified
+Driven in Chromium at desktop (1400×900) and as an emulated iPhone 13 with touch:
+- Mobile: suggestions open on tap, and **tapping one selects the satellite** —
+  the interaction that previously did nothing.
+- Placement asserted rather than eyeballed, since misplacement was the bug:
+  left edges aligned, widths equal, 4 px below the field, fully on screen, on
+  both viewports.
+- Prefix-before-substring ranking, case-insensitivity, keyboard navigation,
+  Escape, and close-on-commit all confirmed.
+- **Touch scrolling**: a swipe over a 20-result list now scrolls it (and selects
+  nothing) where it previously selected the item under the finger.
+- **Outside presses**: checked because review suggested a document-level
+  handler was needed. It is not — pressing the scene canvas already blurs the
+  input to `BODY` and closes the list, under both mouse and touch.
+
 ## 2026-08-08 — Sky mode follow-ups: device orientation, constellations, picking
 
 The three follow-ups the sky view left open, closed together.
