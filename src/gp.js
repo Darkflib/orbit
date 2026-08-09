@@ -34,11 +34,14 @@ async function fetchJsonWithTimeout(url, opts, timeoutMs) {
     const res = await fetch(url, { ...opts, signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    const receivedAt = Date.now();
     const lastModified = res.headers?.get?.('last-modified');
     const parsedLastModified = lastModified ? Date.parse(lastModified) : NaN;
     return {
       data,
-      fetchedAt: Number.isNaN(parsedLastModified) ? Date.now() : parsedLastModified,
+      fetchedAt: Number.isNaN(parsedLastModified)
+        ? receivedAt
+        : Math.min(parsedLastModified, receivedAt),
     };
   } finally {
     clearTimeout(timer);
@@ -55,6 +58,40 @@ const OMM_FIELDS = [
   'MEAN_ANOMALY', 'BSTAR', 'MEAN_MOTION_DOT', 'MEAN_MOTION_DDOT',
   'EPHEMERIS_TYPE', 'CLASSIFICATION_TYPE', 'ELEMENT_SET_NO',
 ];
+
+const OMM_NUMERIC_FIELDS = [
+  'MEAN_MOTION', 'ECCENTRICITY', 'INCLINATION', 'RA_OF_ASC_NODE',
+  'ARG_OF_PERICENTER', 'MEAN_ANOMALY', 'BSTAR', 'MEAN_MOTION_DOT',
+  'MEAN_MOTION_DDOT', 'EPHEMERIS_TYPE', 'ELEMENT_SET_NO',
+];
+
+function validOmmNumber(value) {
+  return value !== '' && value != null && Number.isFinite(Number(value));
+}
+
+// Keep a malformed mirror response from bypassing the upstream fallback and
+// poisoning localStorage. The server performs stricter whole-dataset checks;
+// this browser-side gate covers the fields and physical ranges json2satrec
+// needs for an individual record.
+function isUsableOmm(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  if (!OMM_FIELDS.every((field) => Object.hasOwn(o, field))) return false;
+  if (!OMM_NUMERIC_FIELDS.every((field) => validOmmNumber(o[field]))) return false;
+
+  const norad = Number(o.NORAD_CAT_ID);
+  if (!Number.isInteger(norad) || norad < 1 || norad > 999999999) return false;
+  if (typeof o.EPOCH !== 'string' || Number.isNaN(Date.parse(o.EPOCH))) return false;
+  if (typeof o.CLASSIFICATION_TYPE !== 'string' || !o.CLASSIFICATION_TYPE) return false;
+
+  const meanMotion = Number(o.MEAN_MOTION);
+  const eccentricity = Number(o.ECCENTRICITY);
+  const inclination = Number(o.INCLINATION);
+  if (!(meanMotion > 0 && meanMotion < 20)) return false;
+  if (!(eccentricity >= 0 && eccentricity < 1)) return false;
+  if (!(inclination >= 0 && inclination <= 180)) return false;
+  return ['RA_OF_ASC_NODE', 'ARG_OF_PERICENTER', 'MEAN_ANOMALY']
+    .every((field) => Number(o[field]) >= 0 && Number(o[field]) <= 360);
+}
 
 // Normalise a raw CelesTrak OMM object into our internal record. `omm` holds
 // just the fields json2satrec consumes.
@@ -155,7 +192,8 @@ async function fetchElements(
         attempt.timeout,
       );
       if (!Array.isArray(data) || data.length === 0) throw new Error('no elements returned');
-      const records = data.map(ommToRecord);
+      const records = data.filter(isUsableOmm).map(ommToRecord);
+      if (records.length === 0) throw new Error('no usable elements returned');
       writeCache(cacheName, records, fetchedAt);
       return {
         records,

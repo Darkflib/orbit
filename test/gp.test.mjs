@@ -56,6 +56,10 @@ function okResponse({ lastModified } = {}) {
     json: async () => ([{
       OBJECT_NAME: 'ISS (ZARYA)', NORAD_CAT_ID: 25544, OBJECT_ID: '1998-067A',
       EPOCH: '2026-08-05T00:00:00', MEAN_MOTION: 15.5,
+      ECCENTRICITY: 0.0004, INCLINATION: 51.64, RA_OF_ASC_NODE: 210.1,
+      ARG_OF_PERICENTER: 85.2, MEAN_ANOMALY: 12.3, BSTAR: 0.0001,
+      MEAN_MOTION_DOT: 0.0002, MEAN_MOTION_DDOT: 0,
+      EPHEMERIS_TYPE: 0, CLASSIFICATION_TYPE: 'U', ELEMENT_SET_NO: 999,
     }]),
   };
 }
@@ -99,12 +103,12 @@ test('CelesTrak is used only after the mirror fails', async () => {
   assert.equal(result.source, 'celestrak');
 });
 
-test('an invalid mirror payload also falls back to CelesTrak', async () => {
+test('a nonempty malformed mirror payload also falls back to CelesTrak', async () => {
   globalThis.localStorage.clear();
   let calls = 0;
   globalThis.fetch = async () => {
     calls += 1;
-    if (calls === 1) return { ...okResponse(), json: async () => [] };
+    if (calls === 1) return { ...okResponse(), json: async () => [{}] };
     return okResponse();
   };
 
@@ -140,6 +144,19 @@ test('Last-Modified records mirrored data age and flags old elements', async () 
 
   assert.equal(result.fetchedAt, old.setMilliseconds(0));
   assert.equal(result.stale, true);
+});
+
+test('a future Last-Modified value is clamped to local receipt time', async () => {
+  globalThis.localStorage.clear();
+  const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  globalThis.fetch = okFetch({ lastModified: future.toUTCString() });
+  const before = Date.now();
+
+  const result = await fetchGroup('stations');
+  const after = Date.now();
+
+  assert.ok(result.fetchedAt >= before);
+  assert.ok(result.fetchedAt <= after);
 });
 
 test('a stalled fetch aborts within the timeout instead of hanging (no cache)', async () => {

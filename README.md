@@ -87,7 +87,7 @@ mirror (normally a few seconds); subsequent loads use the 2-hour browser cache.
 
 ## How it works
 
-```
+```text
 scheduled CelesTrak OMM fetch ──► Orbit Data static mirror
                                           │
                          browser fetch (≤ once / 2h)
