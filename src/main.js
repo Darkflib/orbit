@@ -533,9 +533,14 @@ function buildSkipButtons() {
 // It also drops the old 4000-name cap: matching runs over the whole catalogue
 // and only the top few results are built into DOM.
 const SEARCH_LIMIT = 40;
+// How far a pointer may travel between down and up and still count as a tap
+// rather than a scroll. Matches the 6px the canvas click/drag test uses, with a
+// little more slack for a thumb.
+const TAP_SLOP = 10;
 let searchNames = [];      // lower-cased names, parallel to field.records
 let searchMatches = [];    // field indices currently offered
 let searchActive = -1;     // index into searchMatches, or -1 for none
+let searchPointer = null;  // { id, x, y } of an in-progress press on an option
 
 // Lower-casing ~12k names on every keystroke is the one thing here that would
 // actually cost something, so it happens once per catalogue load instead.
@@ -573,10 +578,22 @@ function renderSearchResults() {
     li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(i === searchActive));
     li.textContent = field.records[recIdx].name;
-    // pointerdown, not click: the input blurs on click, and blur closes the
-    // list — the tap would land on an element that no longer exists.
+    // Commit on pointer *up*, and only if the pointer barely moved. Committing
+    // on pointerdown (the obvious way to beat the blur that closes the list)
+    // makes the list impossible to scroll on a phone: the first touch of a
+    // swipe selects whatever is under the finger, so with 40 matches in a
+    // 260px box most of them cannot be reached at all. Focus is instead held
+    // by the mousedown handler in wireControls, which leaves the native scroll
+    // gesture alone.
     li.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
+      searchPointer = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    });
+    li.addEventListener('pointerup', (e) => {
+      const start = searchPointer;
+      searchPointer = null;
+      if (!start || start.id !== e.pointerId) return;
+      // Moved too far to be a tap — that was a scroll, not a choice.
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP) return;
       commitSearch(i);
     });
     frag.appendChild(li);
@@ -701,9 +718,15 @@ function wireControls() {
   $('search').addEventListener('input', onSearchInput);
   $('search').addEventListener('keydown', onSearchKeydown);
   $('search').addEventListener('focus', () => { if ($('search').value) onSearchInput(); });
-  // Closing on blur is safe because the options commit on pointerdown, which
-  // fires first. Deferred so a tap that lands on an option is not raced by it.
   $('search').addEventListener('blur', () => setTimeout(closeSearchResults, 0));
+  // Hold focus in the input while a suggestion is being pressed, so the blur
+  // above does not close the list out from under the press. `mousedown` is the
+  // event that moves focus, and on a touch device it is a compatibility event
+  // fired only after touchend — so preventing it keeps focus on desktop without
+  // suppressing the native scroll gesture, which preventing `pointerdown` would.
+  $('search-results').addEventListener('mousedown', (e) => e.preventDefault());
+  // A cancelled press (the browser taking over for a scroll) is not a tap.
+  $('search-results').addEventListener('pointercancel', () => { searchPointer = null; });
   // The list is anchored to the input's rect, so anything that moves the input
   // has to move the list. `true` catches scrolling inside the panel too.
   window.addEventListener('resize', () => {

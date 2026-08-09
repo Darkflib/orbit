@@ -29,9 +29,19 @@ None of this is fixable while the browser owns the widget, so the widget had to 
   repositioned on resize and on scroll (capturing, so panel scrolling counts).
   It flips above the field when there is more room there, which is the common
   case on a phone with the keyboard up.
-- **Options commit on `pointerdown`, not `click`.** The input blurs on click and
-  blur closes the list, so a tap would otherwise land on an element that had
-  already gone. This is what makes tapping a suggestion work at all on a phone.
+- **Options commit on pointer *up*, and only if the pointer barely moved.** The
+  first attempt committed on `pointerdown` — the obvious way to beat the blur
+  that closes the list — and that was wrong in a way desktop testing could not
+  show: on a phone the first touch of a *swipe* selects whatever is under the
+  finger, so the list cannot be scrolled at all. With 40 matches in a 260 px box
+  that left roughly two-thirds of the results unreachable. (Caught in review by
+  Codex on PR #22; reproduced with synthetic touch events before fixing —
+  a swipe selected the item under the finger and scrolled nothing.)
+  Focus is instead held by a `mousedown` handler on the list that calls
+  `preventDefault()`: `mousedown` is the event that moves focus, and on touch it
+  is a compatibility event fired only after `touchend`, so preventing it holds
+  focus on desktop without suppressing the native scroll gesture the way
+  preventing `pointerdown` does.
 - **Ranked matching over the whole catalogue.** Prefix matches first, then
   matches anywhere in the name, alphabetical within each tier — so "iss" offers
   ISS (ZARYA) before something that merely contains the letters. Names are
@@ -52,6 +62,11 @@ Driven in Chromium at desktop (1400×900) and as an emulated iPhone 13 with touc
   both viewports.
 - Prefix-before-substring ranking, case-insensitivity, keyboard navigation,
   Escape, and close-on-commit all confirmed.
+- **Touch scrolling**: a swipe over a 20-result list now scrolls it (and selects
+  nothing) where it previously selected the item under the finger.
+- **Outside presses**: checked because review suggested a document-level
+  handler was needed. It is not — pressing the scene canvas already blurs the
+  input to `BODY` and closes the list, under both mouse and touch.
 
 ## 2026-08-08 — Sky mode follow-ups: device orientation, constellations, picking
 
