@@ -1,16 +1,11 @@
-// Tests for the GP fetch layer (gp.js), specifically the per-fetch timeout.
-//
-// The behaviour under test: a stalled CelesTrak request must not hang forever.
-// It is aborted after the timeout, and the caller then either falls back to a
-// stale cache (when one exists) or surfaces the failure — never blocks.
+// Tests for the GP fetch layer (gp.js): mirror-first fetching, CelesTrak
+// failover, browser-cache fallback, and the per-fetch timeout.
 //
 // gp.js is browser code, so it reaches for `localStorage` and the global
 // `fetch`. Both are stubbed here; nothing touches the network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// Minimal in-memory localStorage so readCache/writeCache actually round-trip
-// (in Node they otherwise hit `undefined` and silently no-op).
 globalThis.localStorage = {
   store: new Map(),
   getItem(k) { return this.store.has(k) ? this.store.get(k) : null; },
@@ -19,10 +14,8 @@ globalThis.localStorage = {
   clear() { this.store.clear(); },
 };
 
-const { fetchGroup } = await import('../src/gp.js');
+const { fetchDecaying, fetchGroup } = await import('../src/gp.js');
 
-// A fetch that never resolves on its own — it only settles when its
-// AbortSignal fires. This is exactly the stall the timeout exists to break.
 function hangingFetch() {
   return (url, { signal } = {}) => new Promise((_resolve, reject) => {
     if (signal) {
@@ -35,10 +28,6 @@ function hangingFetch() {
   });
 }
 
-// A fetch whose headers arrive (the promise resolves) but whose body never
-// settles — res.json() only rejects when the abort signal fires. This is the
-// header-in / body-stalled case: fetch() has already resolved, so a timeout
-// that only guarded the headers would miss it.
 function bodyStallFetch() {
   return async (url, { signal } = {}) => ({
     ok: true,
@@ -55,29 +44,113 @@ function bodyStallFetch() {
   });
 }
 
-// A fetch that returns a valid one-record OMM payload.
-function okFetch() {
-  return async () => ({
+function okResponse({ lastModified } = {}) {
+  return {
     ok: true,
     status: 200,
+    headers: {
+      get(name) {
+        return name.toLowerCase() === 'last-modified' ? lastModified ?? null : null;
+      },
+    },
     json: async () => ([{
       OBJECT_NAME: 'ISS (ZARYA)', NORAD_CAT_ID: 25544, OBJECT_ID: '1998-067A',
       EPOCH: '2026-08-05T00:00:00', MEAN_MOTION: 15.5,
     }]),
-  });
+  };
 }
+
+function okFetch(options) {
+  return async () => okResponse(options);
+}
+
+test('the Orbit Data mirror is used without contacting CelesTrak when healthy', async () => {
+  globalThis.localStorage.clear();
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return okResponse();
+  };
+
+  const result = await fetchGroup('stations');
+
+  assert.deepEqual(calls, ['https://orbit-data.mikepreston.org/v1/gp/stations.json']);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.source, 'orbit-data');
+  assert.equal(result.fromCache, false);
+});
+
+test('CelesTrak is used only after the mirror fails', async () => {
+  globalThis.localStorage.clear();
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    if (url.includes('orbit-data.mikepreston.org')) {
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+    return okResponse();
+  };
+
+  const result = await fetchGroup('stations');
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0], 'https://orbit-data.mikepreston.org/v1/gp/stations.json');
+  assert.match(calls[1], /^https:\/\/celestrak\.org\//);
+  assert.equal(result.source, 'celestrak');
+});
+
+test('an invalid mirror payload also falls back to CelesTrak', async () => {
+  globalThis.localStorage.clear();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return { ...okResponse(), json: async () => [] };
+    return okResponse();
+  };
+
+  const result = await fetchGroup('geo');
+
+  assert.equal(calls, 2);
+  assert.equal(result.source, 'celestrak');
+});
+
+test('the decaying watch list uses the special-decaying mirror artifact', async () => {
+  globalThis.localStorage.clear();
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return okResponse();
+  };
+
+  const result = await fetchDecaying();
+
+  assert.deepEqual(calls, [
+    'https://orbit-data.mikepreston.org/v1/gp/special-decaying.json',
+  ]);
+  assert.equal(result.source, 'orbit-data');
+  assert.equal(result.records[0].layerId, 'reentry');
+});
+
+test('Last-Modified records mirrored data age and flags old elements', async () => {
+  globalThis.localStorage.clear();
+  const old = new Date(Date.now() - 7 * 60 * 60 * 1000);
+  globalThis.fetch = okFetch({ lastModified: old.toUTCString() });
+
+  const result = await fetchGroup('stations');
+
+  assert.equal(result.fetchedAt, old.setMilliseconds(0));
+  assert.equal(result.stale, true);
+});
 
 test('a stalled fetch aborts within the timeout instead of hanging (no cache)', async () => {
   globalThis.localStorage.clear();
   globalThis.fetch = hangingFetch();
 
   const started = Date.now();
-  // No cache to fall back on, so the aborted fetch propagates as a rejection.
   await assert.rejects(
     () => fetchGroup('starlink', { timeoutMs: 30 }),
-    (err) => err.name === 'AbortError' || /abort/i.test(err.message),
+    /orbit-data: aborted.*celestrak: aborted/i,
   );
-  // It resolved via the timeout, not by waiting on the network.
   assert.ok(Date.now() - started < 2000, 'should reject promptly, not hang');
 });
 
@@ -86,29 +159,26 @@ test('a stalled response body (headers in, body hanging) also times out', async 
   globalThis.fetch = bodyStallFetch();
 
   const started = Date.now();
-  // The timeout must span res.json(), not just the headers — otherwise this
-  // hangs forever. No cache, so it rejects.
   await assert.rejects(
     () => fetchGroup('gnss', { timeoutMs: 30 }),
-    (err) => err.name === 'AbortError' || /abort/i.test(err.message),
+    /orbit-data: aborted.*celestrak: aborted/i,
   );
   assert.ok(Date.now() - started < 2000, 'should reject promptly, not hang on the body');
 });
 
-test('a stalled fetch falls back to a stale cache when one exists', async () => {
+test('both remote failures fall back to stale browser data', async () => {
   globalThis.localStorage.clear();
 
-  // Seed the cache with a good fetch...
   globalThis.fetch = okFetch();
   const first = await fetchGroup('active', { timeoutMs: 1000 });
   assert.equal(first.records.length, 1);
   assert.equal(first.fromCache, false);
 
-  // ...then force a refetch against a stalled network.
   globalThis.fetch = hangingFetch();
   const second = await fetchGroup('active', { force: true, timeoutMs: 30 });
 
   assert.equal(second.records.length, 1, 'served the cached record');
   assert.equal(second.fromCache, true);
+  assert.equal(second.source, 'browser-cache');
   assert.equal(second.stale, true, 'marked stale so the UI can flag it');
 });
