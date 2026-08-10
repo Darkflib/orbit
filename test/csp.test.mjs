@@ -44,8 +44,14 @@ test('the CSP permits the CDN-backed module worker and its source maps', () => {
     ["'self'", 'https://cdn.jsdelivr.net'],
     'worker-src must allow the satellite.js import used by the module worker',
   );
-  assert.ok(
-    directives['connect-src'].includes('https://cdn.jsdelivr.net'),
+  assert.deepEqual(
+    directives['connect-src'],
+    [
+      "'self'",
+      'https://cdn.jsdelivr.net',
+      'https://orbit-data.mikepreston.org',
+      'https://celestrak.org',
+    ],
     'connect-src must allow developer tools to fetch jsDelivr source maps',
   );
 });
