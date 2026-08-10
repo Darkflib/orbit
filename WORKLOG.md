@@ -41,22 +41,81 @@ and `main.js` lerping the orbit target onto a followed satellite. The camera FOV
 moved into `constants.js` so the maths cannot drift from the camera it
 describes.
 
-### Verified — `test/camera-feel.test.mjs`, suite now 84
+### Verified — `test/camera-feel.test.mjs`, suite now 85
 The tests assert the property that was broken rather than the constant that
-fixed it: a reimplementation of the projection, written independently of the
-formula under test, confirms a 100 px drag moves the surface 100 px ± 0.5 px
-across 1.2–19 Earth radii. Apparent motion now varies by **1.02×** across that
-band where the old fixed speed varied by **more than 20×** — that second
-assertion is a regression guard, so reverting to any constant fails it. Plus
-monotonicity, that the new curve straddles the old 0.55 (otherwise it would only
-have fixed one end), and clamping behaviour including distances at or inside the
-surface. Driven in Chromium to confirm the `change` wiring: a 100 px drag
-changes the frame at both zoom extremes, no console errors.
+fixed it, and the oracle is deliberately *not* the shipped algebra rearranged:
+it spins a real point around a real sphere and divides by that point's own
+depth, assuming neither a small angle nor a flat surface. Agreement is therefore
+a result rather than a tautology, and one test pins the divergence — a 100 px
+sweep at 19 Earth radii comes back as **57 px**, because the point genuinely
+rounds the limb, which the closed form ignores.
+
+The claim being made is a *rate*, so it is probed with a 1 px drag: the surface
+keeps up with the cursor to within **0.01 px** across 1.2–19 Earth radii.
+Apparent motion varies by **1.02×** over that band where the old fixed speed
+varied by **more than 20×** — a regression guard, so reverting to any constant
+fails it. Plus monotonicity, that the new curve straddles the old 0.55
+(otherwise it would only have fixed one end), and clamping behaviour including
+distances at or inside the surface. Driven in Chromium to confirm the `change`
+wiring: a 100 px drag changes the frame at both zoom extremes, no console
+errors.
+
+### Review fixes on #26
+- **Follow mode.** The speed is measured from the Earth's centre, not from
+  `controls.target`. In follow mode `main.js` lerps the target onto the selected
+  satellite, and the distance to *that* says nothing about how large the Earth
+  is on screen — orbiting a GEO satellite at the minimum distance would select
+  the lower clamp even though the Earth is several radii away, making a
+  full-viewport drag rotate about 7°. The Earth is what the eye tracks while
+  dragging, so it is what the speed follows. Identical whenever nothing is being
+  followed, since the target is then the origin.
+- **Zoom limits** moved to `ZOOM_MIN_RADII` / `ZOOM_MAX_RADII` in
+  `constants.js`, so the test asserting "the app's actual zoom range" cannot
+  drift from what `scene.js` sets.
 
 ### Note
-The CelesTrak mirror follow-up recorded on 2026-08-09 is **done** — PRs #24 and
-#25 landed `orbit-data.mikepreston.org`, `src/data.js` with a fallback to the
+The CelesTrak mirror follow-up recorded on 2026-08-09 is **done** — PRs #24
+and #25 landed `orbit-data.mikepreston.org`, `src/data.js` with a fallback to the
 bundled snapshot, and the CSP `connect-src` entry. Nothing further needed here.
+
+## 2026-08-10 — Browser harness moves into the repo
+
+Every session so far has rebuilt an ad-hoc Playwright script in `/tmp`, used it
+to find something a unit test structurally could not, and thrown it away.
+`scripts/dev/` keeps the reusable half.
+
+### Why it is worth keeping
+The app has no build step and most of it is DOM, WebGL and pointer behaviour, so
+a large class of defect is invisible both to `node --test` and to reading a
+diff. Every one of these was caught by driving a real browser, and none of them
+could have been caught otherwise: `gl_PointSize` is in framebuffer pixels, so
+stars and satellites rendered at half size on 2× displays; world-scaled labels
+grew without bound on zoom; a native `<datalist>` renders no suggestion UI at
+all on iOS, so search silently did nothing on a phone; committing a suggestion
+on `pointerdown` made the results list impossible to scroll on touch; chrome
+covered 87% of a phone viewport; and four boot failures where a `const` was
+reached from the boot path while still in its temporal dead zone, killing the
+page before first paint.
+
+The standing lesson from this feature: nearly every real defect came from
+*running or measuring* the app, not from reading a diff.
+
+### What landed
+`harness.mjs` is the reusable part — offline CDN routing, CSP stripping,
+deterministic OMM stubs for both the mirror and the CelesTrak fallback, observer
+seeding, error collection. `smoke.mjs` is one driver on top of it, checking boot,
+search, Sky mode and mobile chrome coverage on desktop and phone viewports;
+10/10 passing. Deliberately **not CI**: `node --test` does not pick these files
+up and Playwright is not a devDependency, so `npm ci` stays small.
+
+Pinned versions are read from `index.html`'s own import map rather than
+duplicated, and `installOfflineCdn` now checks `node_modules` *matches* those
+pins. That check exists because it did not: `npm install --no-save three` pulls
+the current release, which splits `three.module.js` into a sibling
+`three.core.js` the import map knows nothing about — the route 404'd and the
+page hung on the loading overlay with nothing in the console. A second trap is
+documented alongside it: `--no-save` prunes the tree against `package.json`
+afterwards, so installing Playwright on its own silently removes `three`.
 
 ## 2026-08-09 — Mobile: panels become bottom sheets
 

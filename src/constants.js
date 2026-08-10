@@ -37,6 +37,14 @@ export const CAMERA_FOV = 45;
 export const ROTATE_SPEED_MIN = 0.02;
 export const ROTATE_SPEED_MAX = 2.5;
 
+// Dolly limits, in Earth radii. Shared with the tests so an assertion about
+// "the app's actual zoom range" cannot quietly drift from what scene.js sets.
+// The far limit frames a full geostationary orbit (radius ~42,164 km ≈ 6.6
+// Earth radii) pole-on within the FOV, and comfortably contains HEO/Molniya
+// apogees.
+export const ZOOM_MIN_RADII = 1.08;
+export const ZOOM_MAX_RADII = 24;
+
 export function rotateSpeedForDistance(distance, {
   fovDeg = CAMERA_FOV,
   radius = EARTH_RADIUS,

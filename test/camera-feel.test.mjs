@@ -16,43 +16,72 @@ import {
 } from '../src/constants.js';
 
 // How far the surface under the cursor appears to move, in pixels, for a drag
-// of `dragPx`. Derived from OrbitControls' own behaviour — it rotates by
-// theta = 2*pi*rotateSpeed*dx/H — and a perspective projection, both written
-// out here rather than reusing anything from the module under test.
+// of `dragPx`.
+//
+// This is a *geometric* oracle, not the module's algebra rearranged: it takes
+// OrbitControls' own drag-to-azimuth conversion (theta = 2*pi*speed*dx/H), spins
+// an actual point around an actual sphere, and projects it through an actual
+// perspective divide. Nothing here assumes a small angle or a flat surface,
+// which is exactly what the module's closed form does assume — so agreement
+// between the two is a real result rather than a tautology.
+//
+// Camera on +Z looking at the origin; the point under the cursor starts at the
+// sub-camera point (0, 0, radius) and the drag swings it round the globe.
 function apparentSurfacePixels(dragPx, distance, speed, {
   viewportH = 900, fovDeg = CAMERA_FOV, radius = EARTH_RADIUS,
 } = {}) {
   const theta = (2 * Math.PI * speed * dragPx) / viewportH;
-  const arc = radius * theta;                       // world units the surface moves
-  const eyeToSurface = distance - radius;
-  const worldPerPixel = (2 * eyeToSurface * Math.tan((fovDeg * DEG2RAD) / 2)) / viewportH;
-  return arc / worldPerPixel;
+  const x = radius * Math.sin(theta);
+  const z = radius * Math.cos(theta);
+  // Divide by the point's own depth, which shortens as it rounds the limb.
+  const depth = distance - z;
+  return (x / depth) * ((viewportH / 2) / Math.tan((fovDeg * DEG2RAD) / 2));
 }
 
 // The band over which the ideal speed is not clamped: 1.15 to 20 Earth radii,
 // which covers everything between "nose against the surface" and "framing GEO".
 const UNCLAMPED = [1.2, 1.5, 2, 3, 4.5, 7, 10, 14, 19].map((r) => EARTH_RADIUS * r);
 
+// The claimed property is a *rate* — the surface keeps up with the cursor as the
+// drag starts. Over a long sweep it cannot: the point genuinely curves away
+// round the limb and its projected motion slows, which the oracle above models
+// and the module's linear form does not. Probing with a small drag measures the
+// rate and nothing else. (`travelsLessThanTheCursorOverALongDrag` below pins
+// that the oracle really does diverge, i.e. that it is not the same equation.)
+const PROBE_PX = 1;
+
 test('a pixel of drag moves the surface about a pixel, at any zoom', () => {
   for (const distance of UNCLAMPED) {
     const speed = rotateSpeedForDistance(distance);
-    const moved = apparentSurfacePixels(100, distance, speed);
+    const moved = apparentSurfacePixels(PROBE_PX, distance, speed);
     assert.ok(
-      Math.abs(moved - 100) < 0.5,
-      `at ${(distance / EARTH_RADIUS).toFixed(1)} Earth radii a 100px drag moved ${moved.toFixed(1)}px`,
+      Math.abs(moved - PROBE_PX) < 0.01,
+      `at ${(distance / EARTH_RADIUS).toFixed(1)} Earth radii a ${PROBE_PX}px drag moved ${moved.toFixed(4)}px`,
     );
   }
+});
+
+test('the oracle is a projection, not the formula under test', () => {
+  // If apparentSurfacePixels were the module's linear equation rearranged, a
+  // 100px drag would come back as exactly 100px too and the test above would be
+  // circular. It does not: zoomed out the point rounds the limb and falls well
+  // short of the cursor, which is the curvature the closed form ignores.
+  const far = EARTH_RADIUS * 19;
+  const moved = apparentSurfacePixels(100, far, rotateSpeedForDistance(far));
+  assert.ok(moved < 70, `expected the long drag to fall behind the cursor, got ${moved.toFixed(1)}px`);
 });
 
 test('the old fixed speed is what varied — by two orders of magnitude', () => {
   // Guards the regression rather than the fix: with rotateSpeed pinned at the
   // previous 0.55, the same drag produced wildly different apparent motion, so
   // any future change back to a constant fails here.
-  const moved = UNCLAMPED.map((d) => apparentSurfacePixels(100, d, 0.55));
+  const moved = UNCLAMPED.map((d) => apparentSurfacePixels(PROBE_PX, d, 0.55));
   const spread = Math.max(...moved) / Math.min(...moved);
   assert.ok(spread > 20, `expected the fixed speed to vary a lot, got ${spread.toFixed(1)}x`);
 
-  const fixedNow = UNCLAMPED.map((d) => apparentSurfacePixels(100, d, rotateSpeedForDistance(d)));
+  const fixedNow = UNCLAMPED.map(
+    (d) => apparentSurfacePixels(PROBE_PX, d, rotateSpeedForDistance(d)),
+  );
   const spreadNow = Math.max(...fixedNow) / Math.min(...fixedNow);
   assert.ok(spreadNow < 1.02, `expected near-constant motion, got ${spreadNow.toFixed(3)}x`);
 });
