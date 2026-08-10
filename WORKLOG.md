@@ -1,5 +1,46 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-10 — Hand-off: state of play
+
+Written at the end of the observer/sky-view run, for whoever picks this up in a
+fresh session.
+
+### Done and verified
+- **Sky mode** — 3D observer view sharing the Earth renderer, opaque ground
+  plane for horizon occlusion, constellation figures, star/satellite picking,
+  device-orientation control gated on the orientation actually being absolute.
+- **Mobile** — panels are bottom sheets, one open at a time. Chrome coverage on
+  a 412×839 viewport went from **87% to 19%**, measured, not eyeballed.
+- **Data mirror** — `orbit-data.mikepreston.org` is primary, CelesTrak is the
+  fallback, the bundled snapshot is the last resort (`src/data.js`,
+  `constants.js`). **Failover is confirmed working in the browser**: the owner
+  ran the code before the DNS record existed and watched it fall through to
+  CelesTrak in the console. That is the real test — the mirror being *down* is
+  the case the fallback exists for, and it was exercised for free.
+- **Drag speed** now scales with zoom (this run's other entry).
+- **Browser harness** in `scripts/dev/`, 10/10 smoke checks.
+
+### Known, deliberate, not bugs
+- The harness is **not** in CI. `node --test` does not pick it up and Playwright
+  is not a devDependency, so `npm ci` stays small. Wire it into a pre-release
+  step if that ever seems worth it.
+- `ORBIT_OFFLINE_CDN=1` **strips the page CSP** — the propagation worker imports
+  satellite.js from the CDN and a route-fulfilled response is refused in a
+  worker context under the page policy. Offline runs therefore do not exercise
+  the real CSP; the default run does, which is why it is the default.
+- `ROTATE_SPEED_MIN = 0.02` is the correct 1:1 value at the closest zoom but a
+  large change from the old muscle memory. Easy to tune if it feels wrong in
+  use.
+
+### The lesson worth carrying forward
+Nearly every real defect in this run came from **running or measuring** the app,
+not from reading a diff. The count that makes the point: four separate boot
+failures where a `const` was reached from the boot path while still in its
+temporal dead zone. Each one killed the page before first paint, each one read
+as perfectly good code, and each was caught only because the loading overlay
+never cleared in a real browser. If a change touches module top-level order,
+DOM, WebGL or pointers, drive it — `scripts/dev/` exists so that is cheap.
+
 ## 2026-08-10 — Drag-to-rotate now scales with zoom
 
 Reported: click-and-drag spins the globe quickly when zoomed in and at a crawl
