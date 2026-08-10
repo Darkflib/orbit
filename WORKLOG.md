@@ -1,5 +1,63 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-10 — Drag-to-rotate now scales with zoom
+
+Reported: click-and-drag spins the globe quickly when zoomed in and at a crawl
+when zoomed out, the same pixels-to-degrees either way.
+
+### Why
+`OrbitControls` converts a drag into a fixed *angle* — `theta = 2π ·
+rotateSpeed · dx / viewportHeight` — with no reference to how far the camera is
+from what it orbits. The apparent speed therefore depends entirely on zoom:
+close in, the globe fills the screen and a few degrees sweep half the visible
+surface; zoomed out it is a marble and the same drag barely moves it. With
+`rotateSpeed` pinned at 0.55, a 100 px drag moved the surface under the cursor:
+
+| zoom (Earth radii) | before | after |
+|---|---|---|
+| 1.08 (closest) | 5214 px | 190 px |
+| 1.5 | 834 px | 100 px |
+| 3.49 (default) | 168 px | 100 px |
+| 8 | 60 px | 100 px |
+| 16 | 28 px | 100 px |
+| 24 (furthest) | 18 px | 82 px |
+
+A 290× swing across the zoom range, which is exactly the reported symptom in
+both directions.
+
+### What landed
+`rotateSpeedForDistance` in `constants.js` derives the speed from the camera
+distance so a pixel of drag moves the surface about a pixel at any zoom. A
+surface point sits `distance − radius` from the eye and projects to
+`radius · theta · H / (2 · (distance − radius) · tan(fov/2))`; substituting
+theta and solving for 1:1 gives the expression. The viewport height cancels,
+which is why the helper needs no DOM and unit-tests in Node.
+
+Clamped at both ends: at the surface the ideal speed tends to zero, which would
+freeze rotation, and fully zoomed out the globe is ~90 px across so a literal
+1:1 drag would spin it several times in one gesture. `scene.js` recomputes on
+the controls' `change` event, which covers the dolly, damping settling after it,
+and `main.js` lerping the orbit target onto a followed satellite. The camera FOV
+moved into `constants.js` so the maths cannot drift from the camera it
+describes.
+
+### Verified — `test/camera-feel.test.mjs`, suite now 84
+The tests assert the property that was broken rather than the constant that
+fixed it: a reimplementation of the projection, written independently of the
+formula under test, confirms a 100 px drag moves the surface 100 px ± 0.5 px
+across 1.2–19 Earth radii. Apparent motion now varies by **1.02×** across that
+band where the old fixed speed varied by **more than 20×** — that second
+assertion is a regression guard, so reverting to any constant fails it. Plus
+monotonicity, that the new curve straddles the old 0.55 (otherwise it would only
+have fixed one end), and clamping behaviour including distances at or inside the
+surface. Driven in Chromium to confirm the `change` wiring: a 100 px drag
+changes the frame at both zoom extremes, no console errors.
+
+### Note
+The CelesTrak mirror follow-up recorded on 2026-08-09 is **done** — PRs #24 and
+#25 landed `orbit-data.mikepreston.org`, `src/data.js` with a fallback to the
+bundled snapshot, and the CSP `connect-src` entry. Nothing further needed here.
+
 ## 2026-08-09 — Mobile: panels become bottom sheets
 
 Reported after testing Sky mode on a phone: the UI is very cramped. Measured on

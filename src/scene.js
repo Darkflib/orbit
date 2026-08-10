@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { EARTH_RADIUS, TEXTURES } from './constants.js';
+import { EARTH_RADIUS, TEXTURES, CAMERA_FOV, rotateSpeedForDistance } from './constants.js';
 
 export function createScene(canvas) {
   const renderer = new THREE.WebGLRenderer({
@@ -16,7 +16,7 @@ export function createScene(canvas) {
   const scene = new THREE.Scene();
 
   const camera = new THREE.PerspectiveCamera(
-    45,
+    CAMERA_FOV,
     window.innerWidth / window.innerHeight,
     0.3,
     4000,
@@ -26,7 +26,6 @@ export function createScene(canvas) {
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.06;
-  controls.rotateSpeed = 0.55;
   controls.minDistance = EARTH_RADIUS * 1.08;
   // Allow zooming out far enough to frame a full geostationary orbit (radius
   // ~42,164 km ≈ 6.6 Earth radii) pole-on within the 45° FOV — the previous
@@ -34,6 +33,17 @@ export function createScene(canvas) {
   // (~153 units) also comfortably contains HEO/Molniya apogees.
   controls.maxDistance = EARTH_RADIUS * 24;
   controls.zoomSpeed = 0.8;
+
+  // Drag speed is derived from the current distance rather than fixed, so a
+  // drag moves the surface under the cursor by about the same number of pixels
+  // whatever the zoom (see rotateSpeedForDistance). `change` covers every way
+  // the distance can move: the dolly, damping settling after it, and main.js
+  // lerping the orbit target onto a followed satellite.
+  const syncRotateSpeed = () => {
+    controls.rotateSpeed = rotateSpeedForDistance(camera.position.distanceTo(controls.target));
+  };
+  syncRotateSpeed();
+  controls.addEventListener('change', syncRotateSpeed);
 
   // --- Lighting ---
   const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);
