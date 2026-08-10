@@ -3,5 +3,4 @@ node_modules/
 .DS_Store
 scratch-*
 
-# Enrichment build cache (conditional-GET bodies/ETags). Regenerated each run.
 .cache/

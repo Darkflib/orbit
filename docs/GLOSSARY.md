@@ -110,11 +110,13 @@ on. The authoritative reentry date comes from SATCAT's `DECAY_DATE`.
 catalogue (CC-BY licensed), used to enrich records with physical data — mass,
 dimensions, shape, operator, and status.
 
-**Enrichment** — Orbit's offline build step (`scripts/enrich/`) that merges
-[SATCAT](#satcat), [GCAT](#gcat), and
+**Enrichment** — The offline merge of [SATCAT](#satcat), [GCAT](#gcat), and
 magnitude data into a per-object catalogue, so the app can show a satellite's
 size, brightness, and operator alongside its live position. Each field records
-which source "won" it.
+which source "won" it. Built and published by the
+[orbit-data](https://github.com/Darkflib/orbit-data) service; `data/` in this
+repository is a weekly mirror of that catalogue, used as a fallback when the
+service is unreachable.
 
 **RCS (Radar Cross Section)** — A measure of how large an object looks to radar,
 used as a rough proxy for physical size. Mentioned in Orbit as a possible future

@@ -179,6 +179,13 @@ bright enough to see.
 Visual references: [Track The Sky](https://trackthesky.com/) and
 [satellitemap.space](https://satellitemap.space/).
 
+The enrichment catalogue and sky artifacts are built and published by
+[orbit-data](https://github.com/Darkflib/orbit-data), which merges the sources
+listed in [SOURCES.md](SOURCES.md). The `data/` tree here is a weekly mirror of
+that published catalogue (`.github/workflows/mirror-catalogue.yml`), served as
+the app's fallback when the mirror origin is unreachable, and as real data for
+local development on a fresh clone.
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set

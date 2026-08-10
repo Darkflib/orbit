@@ -1,14 +1,15 @@
 # Deploy the app to GitHub Pages on every push to the default branch.
 #
-# Race-condition note: the committed data/ in the repo is only a SEED. The
-# freshest enrichment catalogue is published by enrich.yml to the orphan
-# `enrichment-data` branch (and to the live site). Because this workflow uploads
-# the whole tree (path: '.'), deploying the committed seed would clobber the live
-# site with stale data on every code push. To prevent that, we overlay the
-# latest data/ from the enrichment-data branch before uploading, falling back to
-# the committed seed only when that branch doesn't exist yet (first deploy) or
-# has no usable data/. sync-data-seed.yml refreshes that seed monthly, so the
-# fallback is at worst a month behind rather than unboundedly stale.
+# The committed data/ is deployed as-is. It is the app's *fallback* catalogue:
+# src/data.js fetches from the orbit-data service first and only reads these
+# files when that origin is unreachable. mirror-catalogue.yml refreshes them
+# weekly from the published tree, and its commit lands on main, so the deploy it
+# triggers is what ships the refreshed copy.
+#
+# This used to overlay data/ from an orphan `enrichment-data` branch, because a
+# second build pipeline in this repo published fresher data than the committed
+# seed and a code-only push would otherwise have rolled the live site back. That
+# pipeline is gone; there is nothing fresher to overlay.
 name: Deploy static content to Pages
 
 on:
@@ -41,24 +42,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Overlay latest enrichment data
-        # Replaces the committed seed data/ with the newest catalogue published
-        # by enrich.yml, so a code-only push can't roll the live site back to
-        # stale data. The workflow-level `concurrency: pages` group is shared
-        # with enrich.yml, so this run cannot start while an enrich run is in
-        # flight — by the time we fetch, enrich has already pushed its data.
-        # The manifest check guards the seed: we only drop it once we know the
-        # replacement tree is actually there.
-        run: |
-          set -euo pipefail
-          if git fetch --depth=1 origin enrichment-data 2>/dev/null \
-             && git cat-file -e FETCH_HEAD:data/manifest.json 2>/dev/null; then
-            rm -rf data
-            git checkout FETCH_HEAD -- data
-            echo "Deploying data/ from enrichment-data ($(git rev-parse --short FETCH_HEAD))."
-          else
-            echo "No usable enrichment-data branch — deploying the committed seed data/."
-          fi
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - name: Upload artifact

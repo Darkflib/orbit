@@ -1,0 +1,95 @@
+# Weekly: copy the published enrichment catalogue into the committed data/ tree.
+#
+# The app fetches the catalogue from the orbit-data service first and only falls
+# back to this committed copy when that origin is unreachable (src/data.js). The
+# fallback exists so an outage of a single self-hosted service cannot take the
+# catalogue down with it — which means its value is living in a *different
+# failure domain*, on GitHub's infrastructure, not in being independently
+# recomputed. src/data.js only falls through on a throw, so a successful-but-
+# wrong upstream response is used as-is and an independent rebuild here would
+# defend against a failure mode the client can never reach.
+#
+# This replaced a second, full implementation of the SATCAT/GCAT/magnitude merge
+# that ran here daily (scripts/enrich/, plus its own byte-identical copies of the
+# vendored sources), along with the orphan `enrichment-data` branch and the
+# deploy-time overlay that served it. One merge implementation, one set of
+# vendored sources, one place for the catalogue to be wrong.
+#
+# scripts/mirror-catalogue.mjs refuses to overwrite a good seed with a
+# truncated, older, or internally inconsistent tree; see the gates there.
+#
+# Weekly rather than daily: the catalogue moves slowly, the copy is only ever
+# read during an outage, and each snapshot puts a commit against a 26 MB tree.
+#
+# Actions are pinned to full commit SHAs (tag in a trailing comment) so a moved
+# tag can't silently change what runs in CI.
+name: Mirror published catalogue
+
+on:
+  schedule:
+    # 07:47 UTC on Mondays — comfortably after the service's 06:17 catalogue
+    # refresh and its 30 minutes of jitter.
+    - cron: '47 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commit the refreshed catalogue to main
+
+# Deliberately NOT the `pages` group: this job never deploys, so it must not
+# queue behind (or hold up) a deployment. It only needs to not overlap itself.
+concurrency:
+  group: "mirror-catalogue"
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 20
+
+      - name: Mirror the published catalogue
+        # Fails the run on any integrity gate, leaving the previous seed intact.
+        run: node scripts/mirror-catalogue.mjs
+
+      - name: Commit the refreshed catalogue
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data
+          if git diff --cached --quiet; then
+            echo "Committed catalogue is already byte-identical to the published tree."
+            exit 0
+          fi
+
+          GENERATED=$(jq -r '.generatedAt' data/manifest.json)
+          # No [skip ci], unlike the retired seed sync: static.yml no longer
+          # overlays a data branch at deploy time, so this commit is the only
+          # thing that refreshes the copy the live site serves as its fallback.
+          git commit -q -m "data: mirror published catalogue ${GENERATED}"
+
+          # main is busy rarely, but never lose the race to a concurrent push.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Catalogue mirrored to ${GENERATED}."
+              exit 0
+            fi
+            echo "push rejected — rebasing on main and retrying (${attempt}/3)"
+            git fetch origin main
+            if ! git rebase origin/main; then
+              git rebase --abort || true
+              echo "Mirror conflicts with a concurrent change to data/ — skipping this run."
+              exit 1
+            fi
+          done
+          echo "Could not push the catalogue after 3 attempts."
+          exit 1
