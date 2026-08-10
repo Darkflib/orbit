@@ -6,7 +6,8 @@
   <!--
     Content Security Policy. Locks scripts, styles, images, connections and
     workers down to this origin plus the specific external hosts the app needs:
-      - script/img from cdn.jsdelivr.net  (three.js, satellite.js, astronomy-engine, Earth textures)
+      - script/img/worker from cdn.jsdelivr.net (three.js, satellite.js, astronomy-engine, Earth textures)
+      - connect to cdn.jsdelivr.net       (module source maps in developer tools)
       - connect to orbit-data.mikepreston.org (primary static data mirror)
       - connect to celestrak.org          (emergency GP fallback)
     The inline import map is allow-listed by its sha256 hash — if you change the
@@ -21,8 +22,8 @@
     base-uri 'self';
     object-src 'none';
     script-src 'self' https://cdn.jsdelivr.net 'sha256-Y1zW/wPig1IAo9v4XKMdWCGjD4b9+ypEfU9FTOSPOR0=';
-    worker-src 'self';
-    connect-src 'self' https://orbit-data.mikepreston.org https://celestrak.org;
+    worker-src 'self' https://cdn.jsdelivr.net;
+    connect-src 'self' https://cdn.jsdelivr.net https://orbit-data.mikepreston.org https://celestrak.org;
     img-src 'self' data: https://cdn.jsdelivr.net;
     style-src 'self';
     font-src 'self';
