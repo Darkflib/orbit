@@ -3,7 +3,10 @@
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { EARTH_RADIUS, TEXTURES } from './constants.js';
+import {
+  EARTH_RADIUS, TEXTURES, CAMERA_FOV, ZOOM_MIN_RADII, ZOOM_MAX_RADII,
+  rotateSpeedForDistance,
+} from './constants.js';
 
 export function createScene(canvas) {
   const renderer = new THREE.WebGLRenderer({
@@ -16,7 +19,7 @@ export function createScene(canvas) {
   const scene = new THREE.Scene();
 
   const camera = new THREE.PerspectiveCamera(
-    45,
+    CAMERA_FOV,
     window.innerWidth / window.innerHeight,
     0.3,
     4000,
@@ -26,14 +29,29 @@ export function createScene(canvas) {
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.06;
-  controls.rotateSpeed = 0.55;
-  controls.minDistance = EARTH_RADIUS * 1.08;
-  // Allow zooming out far enough to frame a full geostationary orbit (radius
-  // ~42,164 km ≈ 6.6 Earth radii) pole-on within the 45° FOV — the previous
-  // ×12 cap (~76 units) couldn't fit it, so GEO orbits ran off-screen. ×24
-  // (~153 units) also comfortably contains HEO/Molniya apogees.
-  controls.maxDistance = EARTH_RADIUS * 24;
+  controls.minDistance = EARTH_RADIUS * ZOOM_MIN_RADII;
+  // See ZOOM_MAX_RADII for why the far limit is where it is.
+  controls.maxDistance = EARTH_RADIUS * ZOOM_MAX_RADII;
   controls.zoomSpeed = 0.8;
+
+  // Drag speed is derived from the current distance rather than fixed, so a
+  // drag moves the surface under the cursor by about the same number of pixels
+  // whatever the zoom (see rotateSpeedForDistance). `change` covers every way
+  // the distance can move: the dolly and the damping settling after it.
+  //
+  // Measured from the Earth's centre, NOT from `controls.target`. In follow
+  // mode main.js lerps the target onto the selected satellite, and the distance
+  // to *that* says nothing about how large the Earth is on screen — orbiting a
+  // GEO satellite at the minimum distance would select the lower clamp even
+  // though the Earth is several radii away, making a full-viewport drag rotate
+  // about 7°. The Earth is what the eye tracks while dragging, so it is what
+  // the speed should follow. The two are identical whenever nothing is being
+  // followed, since the target is then the origin.
+  const syncRotateSpeed = () => {
+    controls.rotateSpeed = rotateSpeedForDistance(camera.position.length());
+  };
+  syncRotateSpeed();
+  controls.addEventListener('change', syncRotateSpeed);
 
   // --- Lighting ---
   const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);

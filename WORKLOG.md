@@ -1,5 +1,163 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-10 — Hand-off: state of play
+
+Written at the end of the observer/sky-view run, for whoever picks this up in a
+fresh session.
+
+### Done and verified
+- **Sky mode** — 3D observer view sharing the Earth renderer, opaque ground
+  plane for horizon occlusion, constellation figures, star/satellite picking,
+  device-orientation control gated on the orientation actually being absolute.
+- **Mobile** — panels are bottom sheets, one open at a time. Chrome coverage on
+  a 412×839 viewport went from **87% to 19%**, measured, not eyeballed.
+- **Data mirror** — `orbit-data.mikepreston.org` is primary, CelesTrak is the
+  fallback, the bundled snapshot is the last resort (`src/data.js`,
+  `constants.js`). **Failover is confirmed working in the browser**: the owner
+  ran the code before the DNS record existed and watched it fall through to
+  CelesTrak in the console. That is the real test — the mirror being *down* is
+  the case the fallback exists for, and it was exercised for free.
+- **Drag speed** now scales with zoom (this run's other entry).
+- **Browser harness** in `scripts/dev/`, 10/10 smoke checks.
+
+### Known, deliberate, not bugs
+- The harness is **not** in CI. `node --test` does not pick it up and Playwright
+  is not a devDependency, so `npm ci` stays small. Wire it into a pre-release
+  step if that ever seems worth it.
+- `ORBIT_OFFLINE_CDN=1` **strips the page CSP** — the propagation worker imports
+  satellite.js from the CDN and a route-fulfilled response is refused in a
+  worker context under the page policy. Offline runs therefore do not exercise
+  the real CSP; the default run does, which is why it is the default.
+- `ROTATE_SPEED_MIN = 0.02` is the correct 1:1 value at the closest zoom but a
+  large change from the old muscle memory. Easy to tune if it feels wrong in
+  use.
+
+### The lesson worth carrying forward
+Nearly every real defect in this run came from **running or measuring** the app,
+not from reading a diff. The count that makes the point: four separate boot
+failures where a `const` was reached from the boot path while still in its
+temporal dead zone. Each one killed the page before first paint, each one read
+as perfectly good code, and each was caught only because the loading overlay
+never cleared in a real browser. If a change touches module top-level order,
+DOM, WebGL or pointers, drive it — `scripts/dev/` exists so that is cheap.
+
+## 2026-08-10 — Drag-to-rotate now scales with zoom
+
+Reported: click-and-drag spins the globe quickly when zoomed in and at a crawl
+when zoomed out, the same pixels-to-degrees either way.
+
+### Why
+`OrbitControls` converts a drag into a fixed *angle* — `theta = 2π ·
+rotateSpeed · dx / viewportHeight` — with no reference to how far the camera is
+from what it orbits. The apparent speed therefore depends entirely on zoom:
+close in, the globe fills the screen and a few degrees sweep half the visible
+surface; zoomed out it is a marble and the same drag barely moves it. With
+`rotateSpeed` pinned at 0.55, a 100 px drag moved the surface under the cursor:
+
+| zoom (Earth radii) | before | after |
+|---|---|---|
+| 1.08 (closest) | 5214 px | 190 px |
+| 1.5 | 834 px | 100 px |
+| 3.49 (default) | 168 px | 100 px |
+| 8 | 60 px | 100 px |
+| 16 | 28 px | 100 px |
+| 24 (furthest) | 18 px | 82 px |
+
+A 290× swing across the zoom range, which is exactly the reported symptom in
+both directions.
+
+### What landed
+`rotateSpeedForDistance` in `constants.js` derives the speed from the camera
+distance so a pixel of drag moves the surface about a pixel at any zoom. A
+surface point sits `distance − radius` from the eye and projects to
+`radius · theta · H / (2 · (distance − radius) · tan(fov/2))`; substituting
+theta and solving for 1:1 gives the expression. The viewport height cancels,
+which is why the helper needs no DOM and unit-tests in Node.
+
+Clamped at both ends: at the surface the ideal speed tends to zero, which would
+freeze rotation, and fully zoomed out the globe is ~90 px across so a literal
+1:1 drag would spin it several times in one gesture. `scene.js` recomputes on
+the controls' `change` event, which covers the dolly, damping settling after it,
+and `main.js` lerping the orbit target onto a followed satellite. The camera FOV
+moved into `constants.js` so the maths cannot drift from the camera it
+describes.
+
+### Verified — `test/camera-feel.test.mjs`, suite now 85
+The tests assert the property that was broken rather than the constant that
+fixed it, and the oracle is deliberately *not* the shipped algebra rearranged:
+it spins a real point around a real sphere and divides by that point's own
+depth, assuming neither a small angle nor a flat surface. Agreement is therefore
+a result rather than a tautology, and one test pins the divergence — a 100 px
+sweep at 19 Earth radii comes back as **57 px**, because the point genuinely
+rounds the limb, which the closed form ignores.
+
+The claim being made is a *rate*, so it is probed with a 1 px drag: the surface
+keeps up with the cursor to within **0.01 px** across 1.2–19 Earth radii.
+Apparent motion varies by **1.02×** over that band where the old fixed speed
+varied by **more than 20×** — a regression guard, so reverting to any constant
+fails it. Plus monotonicity, that the new curve straddles the old 0.55
+(otherwise it would only have fixed one end), and clamping behaviour including
+distances at or inside the surface. Driven in Chromium to confirm the `change`
+wiring: a 100 px drag changes the frame at both zoom extremes, no console
+errors.
+
+### Review fixes on #26
+- **Follow mode.** The speed is measured from the Earth's centre, not from
+  `controls.target`. In follow mode `main.js` lerps the target onto the selected
+  satellite, and the distance to *that* says nothing about how large the Earth
+  is on screen — orbiting a GEO satellite at the minimum distance would select
+  the lower clamp even though the Earth is several radii away, making a
+  full-viewport drag rotate about 7°. The Earth is what the eye tracks while
+  dragging, so it is what the speed follows. Identical whenever nothing is being
+  followed, since the target is then the origin.
+- **Zoom limits** moved to `ZOOM_MIN_RADII` / `ZOOM_MAX_RADII` in
+  `constants.js`, so the test asserting "the app's actual zoom range" cannot
+  drift from what `scene.js` sets.
+
+### Note
+The CelesTrak mirror follow-up recorded on 2026-08-09 is **done** — PRs #24
+and #25 landed `orbit-data.mikepreston.org`, `src/data.js` with a fallback to the
+bundled snapshot, and the CSP `connect-src` entry. Nothing further needed here.
+
+## 2026-08-10 — Browser harness moves into the repo
+
+Every session so far has rebuilt an ad-hoc Playwright script in `/tmp`, used it
+to find something a unit test structurally could not, and thrown it away.
+`scripts/dev/` keeps the reusable half.
+
+### Why it is worth keeping
+The app has no build step and most of it is DOM, WebGL and pointer behaviour, so
+a large class of defect is invisible both to `node --test` and to reading a
+diff. Every one of these was caught by driving a real browser, and none of them
+could have been caught otherwise: `gl_PointSize` is in framebuffer pixels, so
+stars and satellites rendered at half size on 2× displays; world-scaled labels
+grew without bound on zoom; a native `<datalist>` renders no suggestion UI at
+all on iOS, so search silently did nothing on a phone; committing a suggestion
+on `pointerdown` made the results list impossible to scroll on touch; chrome
+covered 87% of a phone viewport; and four boot failures where a `const` was
+reached from the boot path while still in its temporal dead zone, killing the
+page before first paint.
+
+The standing lesson from this feature: nearly every real defect came from
+*running or measuring* the app, not from reading a diff.
+
+### What landed
+`harness.mjs` is the reusable part — offline CDN routing, CSP stripping,
+deterministic OMM stubs for both the mirror and the CelesTrak fallback, observer
+seeding, error collection. `smoke.mjs` is one driver on top of it, checking boot,
+search, Sky mode and mobile chrome coverage on desktop and phone viewports;
+10/10 passing. Deliberately **not CI**: `node --test` does not pick these files
+up and Playwright is not a devDependency, so `npm ci` stays small.
+
+Pinned versions are read from `index.html`'s own import map rather than
+duplicated, and `installOfflineCdn` now checks `node_modules` *matches* those
+pins. That check exists because it did not: `npm install --no-save three` pulls
+the current release, which splits `three.module.js` into a sibling
+`three.core.js` the import map knows nothing about — the route 404'd and the
+page hung on the loading overlay with nothing in the console. A second trap is
+documented alongside it: `--no-save` prunes the tree against `package.json`
+afterwards, so installing Playwright on its own silently removes `three`.
+
 ## 2026-08-09 — Mobile: panels become bottom sheets
 
 Reported after testing Sky mode on a phone: the UI is very cramped. Measured on

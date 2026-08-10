@@ -10,6 +10,57 @@ export const EARTH_RADIUS = EARTH_RADIUS_KM / KM_PER_UNIT; // ~6.371 units
 export const DEG2RAD = Math.PI / 180;
 export const RAD2DEG = 180 / Math.PI;
 
+// ---------------------------------------------------------------------------
+// Camera feel
+// ---------------------------------------------------------------------------
+
+// Vertical field of view of the Earth-view camera, in degrees. Shared rather
+// than hard-coded in scene.js so the drag-speed maths below cannot drift from
+// the camera it describes.
+export const CAMERA_FOV = 45;
+
+// OrbitControls turns a drag into a fixed *angle* — theta = 2*pi*rotateSpeed*dx
+// / viewportHeight — with no reference to how far the camera is from what it
+// orbits. The apparent speed therefore depends entirely on zoom: close in, the
+// globe fills the screen and a few degrees sweep half the visible surface;
+// zoomed out it is a marble and the same drag barely moves it. Reported as
+// "spins quickly zoomed in, crawls zoomed out".
+//
+// The fix is to derive the speed from the distance so a pixel of drag moves the
+// surface under the cursor by roughly a pixel, at any zoom. A surface point
+// sits (distance - radius) from the eye and projects to
+//
+//     pixels = radius * theta * H / (2 * (distance - radius) * tan(fov/2))
+//
+// Substituting theta and solving pixels = dx gives the expression below; the
+// viewport height cancels, which is why this needs no DOM.
+export const ROTATE_SPEED_MIN = 0.02;
+export const ROTATE_SPEED_MAX = 2.5;
+
+// Dolly limits, in Earth radii. Shared with the tests so an assertion about
+// "the app's actual zoom range" cannot quietly drift from what scene.js sets.
+// The far limit frames a full geostationary orbit (radius ~42,164 km ≈ 6.6
+// Earth radii) pole-on within the FOV, and comfortably contains HEO/Molniya
+// apogees.
+export const ZOOM_MIN_RADII = 1.08;
+export const ZOOM_MAX_RADII = 24;
+
+export function rotateSpeedForDistance(distance, {
+  fovDeg = CAMERA_FOV,
+  radius = EARTH_RADIUS,
+  min = ROTATE_SPEED_MIN,
+  max = ROTATE_SPEED_MAX,
+} = {}) {
+  // Floored: the camera can be parked a hair above the surface, and at exactly
+  // the surface the 1:1 speed is zero — which would freeze rotation entirely.
+  const eyeToSurface = Math.max(distance - radius, radius * 0.01);
+  const ideal = (eyeToSurface * Math.tan((fovDeg * DEG2RAD) / 2)) / (Math.PI * radius);
+  // Clamped at both ends: 1:1 is the right *feel* but not a law worth obeying
+  // into absurdity. Fully zoomed out the globe is ~90px across, so a literal
+  // 1:1 drag would spin it several times in one gesture.
+  return Math.min(max, Math.max(min, ideal));
+}
+
 // GP data is only refetched every this many milliseconds. In between, SGP4
 // propagation runs entirely in the browser — no further network calls.
 export const GP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
