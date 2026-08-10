@@ -1,10 +1,24 @@
 # Enrichment build job — spec
 
+> **Superseded.** This specified a build pipeline that ran inside this
+> repository (`scripts/enrich/`, `enrich.yml`, the orphan `enrichment-data`
+> branch, and `static.yml`'s deploy-time overlay). All of it has been retired.
+> The catalogue is now built and published by the
+> [orbit-data](https://github.com/Darkflib/orbit-data) service, and
+> `mirror-catalogue.yml` copies the published tree into `data/` weekly as the
+> app's offline fallback.
+>
+> Kept because the **artifact contract it specifies is still live** — the bucket
+> layout, `_sources` precedence, and manifest shape in §3–§5 are exactly what
+> orbit-data emits and what `src/enrichment.js` parses. Read §6 (workflow
+> architecture) as history; see [`../SOURCES.md`](../SOURCES.md) and
+> `.github/workflows/mirror-catalogue.yml` for how the data arrives today.
+
 Companion to [`data-enrichment-schema.md`](./data-enrichment-schema.md). Specifies
 the pipeline that fetches the external sources, applies the §3 precedence, and
 emits the artifacts the client consumes. Written to be executed directly.
 
-Status: **draft for confirmation.**
+Status: **implemented, then superseded** (see the note above).
 
 ---
 

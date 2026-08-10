@@ -1,5 +1,70 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-10 — Retiring the enrichment pipeline: one catalogue, mirrored
+
+`orbit-data` now produces the same catalogue this repo's `scripts/enrich/` build
+job produced, so the daily rebuild here was a second implementation of the same
+merge — with its own byte-identical copies of the vendored sources, and its own
+orphan branch and deploy-time overlay to get the output onto the site. The
+question was whether that independence was worth the duplication.
+
+### The argument that settled it
+`src/data.js` falls back to the bundled `data/` only when the mirror **throws** —
+a network failure or a non-OK status. A successful-but-*wrong* response is
+returned to the app as-is. So an independent recompute here defends against a
+failure mode the client can never reach. What actually buys resilience is the
+fallback living in a **different failure domain** (GitHub's infrastructure, not
+one self-hosted box). That argues for keeping the copy and dropping the rebuild.
+
+### Parity, measured before deleting anything
+Live `orbit-data` vs the committed seed, five days apart:
+- `catalog-index.json` and the enrichment buckets carry **identical key sets**.
+- Bucket 25: **428/428 records common**, 4 field differences across ~5,000
+  comparisons — all in `status` / `decayDate` / `opsStatus`, i.e. real drift, not
+  schema divergence.
+- The vendored sources (`qs.mag`, `bsc5.dat`, `bsc5-names.json`,
+  `constellation-lines.json`) hash byte-identical in both repos.
+- `sky/stars.json` and `sky/constellations.json` have identical key sets and
+  counts (904 stars, 88 figures).
+
+One genuine difference: the figures come out in a **different order** — Python's
+codepoint sort puts `CMa` before `Cae`, `localeCompare` does the reverse.
+Contents are equal id-for-id, and `skyview.setConstellations` flattens every
+figure into one vertex buffer, so order is not observable. This is what failed
+`constellation-figures.test.mjs`'s "committed artifact matches a fresh build"
+assertion — that test went with the adapter it covered.
+
+### What landed
+- **`scripts/mirror-catalogue.mjs` (new)** copies the published tree into
+  `data/`. It writes the **raw fetched bytes**, so committed files stay
+  byte-identical to what the mirror serves and diffs track catalogue changes
+  rather than this script's JSON formatting.
+- **Buckets are derived from the index, not from a range.** There is no
+  directory listing, and the ids are sparse: 6-digit NORADs (issued since 2026,
+  after the 5-digit space was exhausted) sit in bucket **100** while buckets
+  70–99 do not exist. A `0..N` walk would 404 on the gap and silently miss the
+  newest objects. Derived count cross-checks against `manifest.buckets` (71).
+- **Integrity gates, not a recomputation**: `schemaVersion`, a 30,000-record
+  floor, a 20% drop limit against the committed seed, never-move-backwards on
+  `generatedAt`, star/figure floors, and — the one that catches a partially
+  published tree — **every NORAD in the index must resolve in the bucket the
+  client will request**. 23 unit tests, one per rejected condition.
+- **Timestamps compare as instants, not strings.** `orbit-data` emits `+00:00`
+  where the retired job emitted `Z`; those sort against each other by suffix once
+  the instants are close, so `Date.parse` does the comparison.
+- **Deleted**: `scripts/enrich/` (1,008 LOC + 2.1 MB vendored), `enrich.yml`,
+  `sync-data-seed.yml`, `static.yml`'s overlay step, and the two adapter test
+  files. The orphan `enrichment-data` branch is now unreferenced.
+- **Weekly, not daily** (`mirror-catalogue.yml`): the catalogue moves slowly and
+  the copy is only ever read during an outage.
+- **No `[skip ci]`** on the mirror commit, unlike the retired seed sync. That
+  flag was correct when `static.yml` overlaid the data branch at deploy time —
+  the site already served those bytes. With the overlay gone, this commit is the
+  only thing that refreshes the fallback the live site ships.
+
+### End-to-end
+Ran against the live service: 36,212 records, 71 buckets, 75 files, 2.1 s.
+
 ## 2026-08-10 — Hand-off: state of play
 
 Written at the end of the observer/sky-view run, for whoever picks this up in a
