@@ -625,7 +625,8 @@ function renderSearchResults() {
     li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(i === searchActive));
     // A catalogue-only match says so, so choosing it is not a surprise. The
-    // "no element set" wording only appears where the index carries dataStatus.
+    // "no element set" wording needs the index's sparse dataStatus flag, so it
+    // is absent both for ordinary objects and on a pre-update tree.
     const meta = opt.kind === 'catalogue'
       ? (opt.dataStatus ? 'no element set' : 'catalogue')
       : '';
@@ -1249,7 +1250,8 @@ function renderCatList() {
       `<span class="cat-meta">${escapeHtml(r.norad)}` +
       `${r.objectType ? ` · ${escapeHtml(TYPE_SHORT[r.objectType] || r.objectType)}` : ''}` +
       `${r.country ? ` · ${escapeHtml(r.country)}` : ''}` +
-      // Only present once the index carries dataStatus; absent on older trees.
+      // Sparse in the index — present only when non-null, and absent entirely
+      // on a tree published before orbit-data shipped the field.
       `${r.dataStatus ? ' · no element set' : ''}</span>` +
       (b
         ? `<span class="badge tiny bright-${b.key}${r.magEst ? ' badge-est' : ''}"` +

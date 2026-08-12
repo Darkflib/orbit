@@ -37,6 +37,33 @@ SATCAT code, and misreading Earth's own code (`EA`) would tell a user their
 satellite had left Earth orbit. `isEarthOrbit` therefore accepts `earth`, `ea`
 and absent, and only then treats a centre as non-Earth.
 
+### Follow-up, same day: the full `orbitCenter` set, and the docked case
+
+The published centres turned out to be more than bodies, so "orbits X" was the
+wrong sentence for a third of them. Now classified four ways:
+
+- **Bodies** (`sun`, `moon`, the planets, `asteroid`, `comet`) — "orbits the
+  Sun, not Earth".
+- **Earth-system places** (`earth-lagrange`, `earth-sun-l1`…`l5`,
+  `earth-moon-barycenter`) and `solar-system-escape` — "is at the Earth–Sun L2
+  point, not in Earth orbit", "is on an escape trajectory out of the solar
+  system". Nothing here is *orbited*: Pioneer 10 does not orbit its own
+  trajectory.
+- **A numeric centre is the host object's catalog number**, which SATCAT uses
+  for a docked object — and a module docked to the ISS is very much in Earth
+  orbit. The naive fallback would have rendered "orbits 25544, not Earth". It is
+  now Earth-orbiting, keeps its approximate orbit, and reads "docked to NORAD
+  25544". No SATCAT row currently carries both a numeric centre and a
+  `dataStatus`, so this is a guard against a latent case, with a test so it
+  cannot regress.
+- **Anything unrecognised** is reported rather than guessed at ("not in Earth
+  orbit (catalogue centre: XX)") — claiming an object orbits a string we do not
+  understand is worse than admitting we do not know.
+
+`dataStatus` also lands in `catalog-index.json`, sparse in the same idiom as
+`magEst` (written only when non-null), so ~978 of 36,205 rows carry it and the
+client keeps treating the key as optional.
+
 ### What landed
 - **`src/enrichment.js`** — `elementStatus()` (the null-or-explanation decision,
   including the Earth/deep-space split), `orbitCenterName()`,

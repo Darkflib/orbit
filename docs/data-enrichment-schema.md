@@ -78,8 +78,9 @@ record is the union of whatever sources resolved.
   // ---- element availability (§2.1) ----
   "dataStatus": null,            // null when elements are published; otherwise
                                  // no-current-elements | no-initial-elements | no-elements-available
-  "orbitCenter": "earth",        // body orbited, friendly and lower-cased ("earth", "sun",
-                                 // "moon", "mars"); a raw SATCAT code if unmapped
+  "orbitCenter": "earth",        // what it is centred on, friendly and lower-cased: a body,
+                                 // an Earth-system place, "solar-system-escape", or the host
+                                 // object's NORAD number when docked (§2.1)
   "approximateOrbit": null,      // { periodMinutes, inclinationDeg, apogeeKm, perigeeKm },
                                  // each float|null — catalogue values, not an element set
 
@@ -170,6 +171,22 @@ fetch — and was reported as a missing satellite.
 }
 ```
 
+#### `orbitCenter` is not always a body
+
+SATCAT's published centres are `earth`, the bodies (`sun`, `moon`, `mercury`,
+`venus`, `mars`, `jupiter`, `saturn`, `uranus`, `neptune`, `pluto`, `asteroid`,
+`comet`), Earth-system places (`earth-lagrange`, `earth-sun-l1` … `l5`,
+`earth-moon-barycenter`), and `solar-system-escape`. Only the bodies can be
+*orbited*: Pioneer 10 does not orbit its escape trajectory, and a probe at
+Earth–Sun L2 orbits nothing, so those get "is at …" / "is on …" wording instead.
+
+A **numeric** `orbitCenter` is the host object's NORAD catalog number, which
+SATCAT uses for a docked object. That is still Earth orbit — a module docked to
+the ISS is in the same orbit as the ISS — so it is classified as Earth-orbiting
+and read as "docked to NORAD 25544", never as "orbits 25544, not Earth". No
+SATCAT row currently carries both a numeric centre and a `dataStatus`, so this
+guards a latent case, not a live one.
+
 411 of the Earth-orbiting ones carry an `approximateOrbit`. It is shown, always
 labelled approximate and explicitly not usable for pointing or pass prediction:
 these are catalogue values with no epoch, so nothing can be propagated from them
@@ -240,7 +257,10 @@ active objects — this window only affects which records have *enrichment*.)
 
 1. **`data/catalog-index.json`** — lean, for the catalogue browse/filter list.
    `[{ norad, name, objectType, country, opsStatus, stdMag }]`, plus
-   `dataStatus` on the rows that have one (§2.1), where the index carries it.
+   `dataStatus` on the ~978 rows that have one (§2.1). Sparse, like `magEst`:
+   the key is written only when non-null, so the client must tolerate its
+   absence — which is both the majority of rows and every row of a tree
+   published before the field shipped.
    Small enough to load once; drives search/sort/filter without per-object fetches.
 
 2. **`data/enrichment/<bucket>.json`** — the full records above, **bucketed by

@@ -89,13 +89,66 @@ test('a deep-space probe is not described as withheld data', () => {
   );
 });
 
-test('an unmapped orbit centre still reads as a sentence', () => {
-  const st = elementStatus({ norad: '1', dataStatus: 'no-elements-available', orbitCenter: 'EM L2' });
-  assert.equal(st.key, 'not-earth-orbit');
-  assert.match(st.detail, /orbits EM L2, not Earth/);
+test('every published orbit centre gets a readable sentence', () => {
+  // SATCAT's complete published ORBIT_CENTER set. A body is orbited; a
+  // Lagrange point, the Earth–Moon barycentre and an escape trajectory are not,
+  // so none of them may be described as being orbited.
+  const bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn',
+    'uranus', 'neptune', 'pluto', 'asteroid', 'comet'];
+  for (const centre of bodies) {
+    const st = elementStatus({ ...USA_224, orbitCenter: centre });
+    assert.equal(st.key, 'not-earth-orbit', centre);
+    assert.match(st.detail, /^This object orbits .+, not Earth\./, centre);
+    assert.doesNotMatch(st.detail, /undefined|\[object/, centre);
+  }
+
+  const places = ['earth-lagrange', 'earth-sun-l1', 'earth-sun-l2', 'earth-sun-l3',
+    'earth-sun-l4', 'earth-sun-l5', 'earth-moon-barycenter', 'solar-system-escape'];
+  for (const centre of places) {
+    const st = elementStatus({ ...USA_224, orbitCenter: centre });
+    assert.equal(st.key, 'not-earth-orbit', centre);
+    assert.match(st.detail, /not in Earth orbit\./, centre);
+    assert.doesNotMatch(st.detail, /orbits/, centre);
+  }
+
+  // Pioneer 10 is bound to nothing at all — it must not be said to orbit its
+  // own escape trajectory.
+  assert.match(
+    elementStatus({ ...USA_224, orbitCenter: 'solar-system-escape' }).detail,
+    /escape trajectory out of the solar system/,
+  );
+  assert.match(
+    elementStatus({ ...USA_224, orbitCenter: 'earth-sun-l2' }).detail,
+    /at the Earth–Sun L2 point/,
+  );
+
   assert.equal(orbitCenterName('mars'), 'Mars');
-  assert.equal(orbitCenterName('EM L2'), 'EM L2');
+  assert.equal(orbitCenterName('earth-moon-barycenter'), 'the Earth–Moon barycentre');
   assert.equal(orbitCenterName(null), null);
+});
+
+test('a docked object is still in Earth orbit', () => {
+  // SATCAT puts the *host* object's catalog number in ORBIT_CENTER for a docked
+  // object, so a numeric centre is not a body. Rendering "orbits 25544, not
+  // Earth" for a module docked to the ISS would be plainly wrong. No SATCAT row
+  // currently carries both a numeric centre and a dataStatus, so this guards a
+  // latent case rather than a live one.
+  const st = elementStatus({ ...USA_224, orbitCenter: '25544' });
+  assert.equal(st.key, 'no-elements-available');
+  assert.equal(st.dockedTo, '25544');
+  assert.doesNotMatch(st.detail, /not in Earth orbit|not Earth/);
+  assert.match(st.detail, /docked to NORAD 25544/);
+  // Its approximate Earth orbit is still meaningful, unlike a probe's.
+  assert.deepEqual(st.approximateOrbit, USA_224.approximateOrbit);
+  assert.equal(orbitCenterName('25544'), 'NORAD 25544');
+});
+
+test('an unrecognised orbit centre is reported, not guessed at', () => {
+  const st = elementStatus({ norad: '1', dataStatus: 'no-elements-available', orbitCenter: 'XX' });
+  assert.equal(st.key, 'not-earth-orbit');
+  assert.match(st.detail, /not in Earth orbit \(catalogue centre: XX\)/);
+  assert.doesNotMatch(st.detail, /orbits/);
+  assert.equal(orbitCenterName('XX'), 'XX');
 });
 
 test('SATCAT\'s raw Earth code is never read as "not in Earth orbit"', () => {

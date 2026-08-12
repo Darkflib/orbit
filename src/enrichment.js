@@ -81,36 +81,86 @@ export function brightnessClass(stdMag) {
 //     never published a TLE or OMM for, and never will. Nothing is broken; the
 //     data simply is not published.
 //   - 241 deep-space probes (Pioneer, Mariner, Ranger …) orbiting the Sun or
-//     another body. For those, "no TLE" is a category error rather than a
-//     restriction: there is no Earth orbit for an element set to describe.
+//     another body, sitting at a Lagrange point, or — Pioneer 10 — leaving the
+//     solar system entirely. For those, "no TLE" is a category error rather
+//     than a restriction: there is no Earth orbit for an element set to
+//     describe.
+//
+// `orbitCenter` is not always a body. SATCAT's published values cover bodies,
+// Earth-system places (Lagrange points, the Earth–Moon barycentre), the escape
+// case, and — for a docked object — the host object's NORAD catalog number.
+// The last of those is still Earth orbit, and is classified as such below.
 //
 // `dataStatus`, `orbitCenter` and `approximateOrbit` are additive fields, so a
 // tree published before orbit-data shipped them carries none of the three.
 // Everything here treats them as optional and returns null when absent, which
 // is exactly the pre-existing behaviour.
 
-// SATCAT orbit centres we can name. `orbitCenter` arrives friendly and
-// lower-cased; an unmapped centre comes through as its raw SATCAT code.
-const ORBIT_CENTER_NAMES = {
-  earth: 'Earth', sun: 'the Sun', moon: 'the Moon',
-  mercury: 'Mercury', venus: 'Venus', mars: 'Mars', jupiter: 'Jupiter',
-  saturn: 'Saturn', uranus: 'Uranus', neptune: 'Neptune', pluto: 'Pluto',
+// Bodies an object can orbit. The sentence built from these reads
+// "orbits <name>, not Earth", so the article belongs in the name.
+const ORBIT_CENTER_BODIES = {
+  sun: 'the Sun', moon: 'the Moon', mercury: 'Mercury', venus: 'Venus',
+  mars: 'Mars', jupiter: 'Jupiter', saturn: 'Saturn', uranus: 'Uranus',
+  neptune: 'Neptune', pluto: 'Pluto', asteroid: 'an asteroid', comet: 'a comet',
 };
 
-// Display name for the body an object orbits, or null when we have none.
-export function orbitCenterName(orbitCenter) {
-  if (!orbitCenter) return null;
-  const key = String(orbitCenter).trim().toLowerCase();
-  return ORBIT_CENTER_NAMES[key] || String(orbitCenter).trim();
+// Centres that are not bodies: a place in the Earth–Sun or Earth–Moon system,
+// or no centre at all. "Orbits X" is wrong for every one of these — Pioneer 10
+// does not orbit its escape trajectory — so each carries its own clause.
+const ORBIT_CENTER_PLACES = {
+  'earth-lagrange': {
+    name: 'an Earth-system Lagrange point',
+    clause: 'is at an Earth-system Lagrange point',
+  },
+  'earth-sun-l1': { name: 'the Earth–Sun L1 point', clause: 'is at the Earth–Sun L1 point' },
+  'earth-sun-l2': { name: 'the Earth–Sun L2 point', clause: 'is at the Earth–Sun L2 point' },
+  'earth-sun-l3': { name: 'the Earth–Sun L3 point', clause: 'is at the Earth–Sun L3 point' },
+  'earth-sun-l4': { name: 'the Earth–Sun L4 point', clause: 'is at the Earth–Sun L4 point' },
+  'earth-sun-l5': { name: 'the Earth–Sun L5 point', clause: 'is at the Earth–Sun L5 point' },
+  'earth-moon-barycenter': {
+    name: 'the Earth–Moon barycentre',
+    clause: 'is at the Earth–Moon barycentre',
+  },
+  'solar-system-escape': {
+    name: 'a solar-system escape trajectory',
+    clause: 'is on an escape trajectory out of the solar system',
+  },
+};
+
+// A numeric centre is not a body at all: SATCAT puts the *host object's* NORAD
+// catalog number there for something docked to it. A module docked to the ISS
+// is very much in Earth orbit, so this must never fall through to the "not in
+// Earth orbit" wording. (Latent, not live: no row currently carries both a
+// numeric centre and a dataStatus.)
+const DOCKED_RE = /^\d+$/;
+
+// Classify a centre. `earth` and an absent value are the common cases; `ea` is
+// SATCAT's own raw code for Earth and is accepted so that a raw code can never
+// be read as "not in Earth orbit". An unrecognised value is reported as
+// unknown rather than guessed at, because claiming an object orbits a string we
+// do not understand is worse than saying we do not know what it orbits.
+function orbitCenterInfo(orbitCenter) {
+  if (!orbitCenter) return { kind: 'earth', name: 'Earth' };
+  const raw = String(orbitCenter).trim();
+  const key = raw.toLowerCase();
+  if (key === 'earth' || key === 'ea') return { kind: 'earth', name: 'Earth' };
+  if (DOCKED_RE.test(key)) return { kind: 'docked', name: `NORAD ${raw}`, host: raw };
+  if (ORBIT_CENTER_BODIES[key]) return { kind: 'body', name: ORBIT_CENTER_BODIES[key] };
+  const place = ORBIT_CENTER_PLACES[key];
+  if (place) return { kind: 'place', name: place.name, clause: place.clause };
+  return { kind: 'unknown', name: raw };
 }
 
-// An absent centre means Earth (the field is additive, and everything with a
-// GP record is Earth-orbiting). `ea` is SATCAT's own raw code for Earth, and is
-// accepted too so an unmapped code can never be read as "not in Earth orbit".
+// Display name for what an object orbits, or null when we have none.
+export function orbitCenterName(orbitCenter) {
+  return orbitCenter ? orbitCenterInfo(orbitCenter).name : null;
+}
+
+// Earth orbit covers the plain centre, an absent one, and a docked object,
+// whose centre names its host rather than a body.
 function isEarthOrbit(orbitCenter) {
-  if (!orbitCenter) return true;
-  const key = String(orbitCenter).trim().toLowerCase();
-  return key === 'earth' || key === 'ea';
+  const kind = orbitCenterInfo(orbitCenter).kind;
+  return kind === 'earth' || kind === 'docked';
 }
 
 const NO_ELEMENT_LABELS = {
@@ -143,24 +193,36 @@ const UNKNOWN_STATUS = {
 export function elementStatus(rec) {
   const status = rec && rec.dataStatus;
   if (!status) return null;
+  const centre = orbitCenterInfo(rec.orbitCenter);
 
-  if (!isEarthOrbit(rec.orbitCenter)) {
-    const body = orbitCenterName(rec.orbitCenter);
+  if (centre.kind !== 'earth' && centre.kind !== 'docked') {
+    // One sentence per kind of centre, because "orbits X" is only true of a
+    // body: a probe at Earth–Sun L2 orbits nothing, and one on a solar-system
+    // escape trajectory is not bound to anything at all.
+    const where = centre.kind === 'body'
+      ? `This object orbits ${centre.name}, not Earth.`
+      : centre.kind === 'place'
+        ? `This object ${centre.clause}, not in Earth orbit.`
+        : `This object is not in Earth orbit (catalogue centre: ${centre.name}).`;
     return {
       key: 'not-earth-orbit',
       label: 'Not in Earth orbit',
-      // An approximate *Earth* orbit is meaningless for a heliocentric probe,
-      // so it is dropped here even if the record carries one.
-      detail: `This object orbits ${body}, not Earth. It has no Earth-orbit `
-        + 'element set, and no position, ground track or passes to show.',
+      // An approximate *Earth* orbit is meaningless out here, so it is dropped
+      // even if the record carries one.
+      detail: `${where} It has no Earth-orbit element set, and no position, `
+        + 'ground track or passes to show.',
       approximateOrbit: null,
     };
   }
 
+  const detail = NO_ELEMENT_DETAILS[status] || UNKNOWN_STATUS.detail;
   return {
     key: status,
     label: NO_ELEMENT_LABELS[status] || UNKNOWN_STATUS.label,
-    detail: NO_ELEMENT_DETAILS[status] || UNKNOWN_STATUS.detail,
+    // A docked object's centre names its host, which is worth saying: it is in
+    // Earth orbit, attached to something else that has its own catalogue entry.
+    detail: centre.kind === 'docked' ? `${detail} It is docked to ${centre.name}.` : detail,
+    dockedTo: centre.kind === 'docked' ? centre.host : null,
     approximateOrbit: rec.approximateOrbit || null,
   };
 }
