@@ -20,6 +20,10 @@ import {
   getEnrichment, loadIndex, loadManifest, brightnessClass,
   elementStatus, approximateOrbitRows, APPROXIMATE_ORBIT_NOTE,
 } from './enrichment.js';
+import {
+  normaliseQuery, sortOptions, catalogueCandidates, mergeCandidates,
+  SEARCH_LIMIT, CATALOGUE_SEARCH_MIN,
+} from './search.js';
 import { createSkyView } from './skyview.js';
 
 // ---- DOM handles ----------------------------------------------------------
@@ -541,23 +545,20 @@ function buildSkipButtons() {
 // and only the top few results are built into DOM.
 //
 // The field only holds objects with orbital elements, so a name it does not
-// have used to produce an empty list and no explanation — which is how USA 224
+// have produced an empty list and no explanation — which is how USA 224
 // (NORAD 37348), a catalogued object CelesTrak publishes no elements for, came
-// to be reported as missing. When the field has no match the search falls back
-// to the catalogue index, which does list it, and the chosen result opens its
-// catalogue record rather than trying to select something in 3D.
-const SEARCH_LIMIT = 40;
-const CATALOGUE_SEARCH_LIMIT = 12;
-// The index is ~5 MB, so the fallback waits for a query worth spending it on.
-const CATALOGUE_SEARCH_MIN = 3;
+// to be reported as missing. The catalogue index is now searched alongside the
+// field on every query long enough to be worth it (see search.js for why "only
+// when the field came up empty" is the wrong rule), and a catalogue-only result
+// opens its catalogue record rather than trying to select something in 3D.
 // How far a pointer may travel between down and up and still count as a tap
 // rather than a scroll. Matches the 6px the canvas click/drag test uses, with a
 // little more slack for a thumb.
 const TAP_SLOP = 10;
 let searchNames = [];      // lower-cased names, parallel to field.records
-let searchMatches = [];    // options offered (searchCandidates / catalogueCandidates)
+let searchMatches = [];    // options offered (see search.js)
 let searchNote = '';       // shown instead of options when there are none
-let searchSeq = 0;         // guards an in-flight catalogue lookup
+let searchSeq = 0;         // invalidates in-flight catalogue lookups
 let searchActive = -1;     // index into searchMatches, or -1 for none
 let searchPointer = null;  // { id, x, y } of an in-progress press on an option
 
@@ -570,48 +571,26 @@ function buildSearchIndex() {
   closeSearchResults();
 }
 
-// Prefix matches first, then matches anywhere in the name; alphabetical within
-// each tier. Typing "iss" should offer ISS (ZARYA) before CASSIOPEIA.
-function searchCandidates(query) {
-  const q = query.trim().toLowerCase();
+// Options for everything in the loaded field that matches, ranked and capped.
+// Catalog numbers match by prefix here as they do in the Catalogue browser, so
+// typing an id finds a loaded object by id rather than only by name.
+function fieldCandidates(query) {
+  const q = normaliseQuery(query);
   if (!q) return [];
-  const prefix = [];
-  const anywhere = [];
+  const matches = [];
   for (let i = 0; i < searchNames.length; i++) {
-    const at = searchNames[i].indexOf(q);
-    if (at === 0) prefix.push(i);
-    else if (at > 0) anywhere.push(i);
+    const rec = field.records[i];
+    if (!searchNames[i].includes(q) && !rec.norad.startsWith(q)) continue;
+    matches.push({ kind: 'field', fieldIndex: i, norad: rec.norad, name: rec.name });
   }
-  const byName = (a, b) => searchNames[a].localeCompare(searchNames[b]);
-  prefix.sort(byName);
-  anywhere.sort(byName);
-  return prefix.concat(anywhere)
-    .slice(0, SEARCH_LIMIT)
-    .map((i) => ({ kind: 'field', fieldIndex: i, name: field.records[i].name }));
+  return sortOptions(matches, q).slice(0, SEARCH_LIMIT);
 }
 
-// The same ranking over the catalogue index — every catalogued object, not just
-// the propagatable ones. Rows are defensive about their shape: the index is
-// fetched, and a malformed one must degrade to "no match", not throw.
-async function catalogueCandidates(query) {
-  const q = query.trim().toLowerCase();
-  if (q.length < CATALOGUE_SEARCH_MIN) return [];
-  const index = await loadIndex();
-  if (!Array.isArray(index)) return [];
-  const prefix = [];
-  const anywhere = [];
-  for (const r of index) {
-    const norad = String(r?.norad ?? '');
-    const name = String(r?.name ?? '') || `NORAD ${norad}`;
-    const at = name.toLowerCase().indexOf(q);
-    if (at < 0 && !norad.startsWith(q)) continue;
-    const opt = { kind: 'catalogue', norad, name, dataStatus: r?.dataStatus ?? null };
-    (at === 0 || norad.startsWith(q) ? prefix : anywhere).push(opt);
-  }
-  const byName = (a, b) => a.name.localeCompare(b.name);
-  prefix.sort(byName);
-  anywhere.sort(byName);
-  return prefix.concat(anywhere).slice(0, CATALOGUE_SEARCH_LIMIT);
+// The same, over the catalogue index — every catalogued object, not just the
+// propagatable ones. The index is fetched once and memoised by enrichment.js.
+async function fetchCatalogueCandidates(query) {
+  if (normaliseQuery(query).length < CATALOGUE_SEARCH_MIN) return [];
+  return catalogueCandidates(await loadIndex(), query);
 }
 
 function renderSearchResults() {
@@ -710,6 +689,12 @@ function openSearchResults() {
 
 function closeSearchResults() {
   searchActive = -1;
+  // Invalidate any catalogue lookup still in flight. Without this, a list
+  // dismissed with Escape (or by blurring the input) pops back open when the
+  // ~5 MB index finally lands and its handler renders and re-opens — the user
+  // closed it, so that result is no longer wanted.
+  searchSeq++;
+  searchNote = '';
   $('search-results').classList.add('hidden');
   $('search').setAttribute('aria-expanded', 'false');
   $('search').setAttribute('aria-activedescendant', '');
@@ -745,19 +730,23 @@ async function showCatalogueRecord(norad, name) {
 function onSearchInput() {
   const query = $('search').value;
   const seq = ++searchSeq;
-  searchMatches = searchCandidates(query);
+  const fieldOpts = fieldCandidates(query);
+  searchMatches = fieldOpts;
   searchActive = -1;
   searchNote = '';
-  // Only when the loaded field has nothing: the index costs a fetch, and a
-  // query that already matches something in 3D does not need it.
-  if (!searchMatches.length && query.trim().length >= CATALOGUE_SEARCH_MIN) {
-    searchNote = 'Searching the full catalogue…';
-    catalogueCandidates(query)
+  // The catalogue is searched *as well as* the field, never instead of it: the
+  // field having some match says nothing about whether it has the right one
+  // (see search.js). Field results show immediately and the catalogue merges in
+  // when it lands, so the common case never waits on a fetch.
+  if (normaliseQuery(query).length >= CATALOGUE_SEARCH_MIN) {
+    if (!fieldOpts.length) searchNote = 'Searching the full catalogue…';
+    fetchCatalogueCandidates(query)
       .catch(() => [])
       .then((opts) => {
-        if (seq !== searchSeq) return; // superseded by a later keystroke
-        searchMatches = opts;
-        searchNote = opts.length ? '' : 'No match in the catalogue.';
+        // Superseded by a later keystroke, or dismissed while in flight.
+        if (seq !== searchSeq) return;
+        searchMatches = mergeCandidates(fieldOpts, opts, query);
+        searchNote = searchMatches.length ? '' : 'No match in the catalogue.';
         renderSearchResults();
         openSearchResults();
       });

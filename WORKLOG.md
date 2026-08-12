@@ -82,15 +82,43 @@ client keeps treating the key as optional.
 - Neutral grey styling, not a warning colour: this is a normal catalogue entry,
   not an error state.
 
+### Review follow-up: the field having *a* match is not the same as the right one
+
+The first cut only consulted the catalogue when the field search returned
+nothing. Two reviewers found the same hole independently, and it defeats the
+feature for exactly the object it was built for: with the default Starlink layer
+loaded, `37348` substring-matches the **name** STARLINK-37348 (NORAD 68737), so
+the field is non-empty, the catalogue is never asked, and USA 224 is silently
+absent while a different satellite is offered in its place. A cheap-looking
+guard turned into a wrong answer that looks like a right one.
+
+Both sets are now always searched and merged, de-duplicated by NORAD (the field
+copy wins — only it can be shown in 3D) and ranked together: exact catalog
+number, exact name, name prefix, catalog-number prefix, then anywhere in the
+name. The ranking is the point of the merge, not a detail of it, so it moved
+into a new pure `src/search.js` with the collision case pinned by a test. Field
+results still render immediately and the catalogue merges in when it lands, so
+the common case never waits on the fetch.
+
+The same review caught a second real bug: dismissing the list with Escape (or by
+blurring the input) while the index request was in flight did not invalidate it,
+so the popup reappeared when the response landed. `closeSearchResults` now bumps
+the sequence counter that guards the handler, which covers Escape, blur, commit
+and a catalogue reload alike. That one is DOM timing with no seam a `node --test`
+can reach; it is checked in the browser driver instead.
+
 ### Verified
-`npm test` (104 tests, 9 new in `test/enrichment.test.mjs`). Two throwaway
-Playwright drivers on top of `scripts/dev/harness.mjs`, because the whole defect
-was a UI absence a unit test cannot see: one with the new fields stubbed in
-(15/15 — search offers USA 224, the record explains itself, the approximate orbit
-renders with its caveat, a heliocentric probe reads differently, an ordinary
-search still selects in 3D, no console errors), one against the *current*
-published snapshot with none of the new fields (search still finds it, no
-half-rendered notice, old wording intact).
+`npm test` — 115 tests, 115 pass (11 in `test/enrichment.test.mjs`, 9 in
+`test/search.test.mjs`). Throwaway Playwright drivers on top of
+`scripts/dev/harness.mjs`, because most of this defect was a UI absence a unit
+test cannot see: one with the new fields stubbed in (21/21 — search offers USA
+224 *and* ranks it above the colliding Starlink name, the record explains
+itself, the approximate orbit renders with its caveat, a heliocentric probe and
+an escape trajectory read differently, a docked object stays in Earth orbit, an
+Escape keypress mid-fetch stays dismissed, an ordinary search still selects in
+3D, no console errors), one against the *current* published snapshot with none
+of the new fields (search still finds it, no half-rendered notice, old wording
+intact).
 
 ### Not done
 Nothing propagates for these objects — they never enter `field.records`, because

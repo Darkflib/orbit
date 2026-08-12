@@ -71,16 +71,17 @@ export function brightnessClass(stdMag) {
 
 // ---- Objects with no element set -----------------------------------------
 // A catalogued object does not necessarily have orbital elements. CelesTrak's
-// SATCAT lists 975 on-orbit objects with a DATA_STATUS_CODE instead of a GP
-// record, and orbit-data passes that through as `dataStatus`. Two genuinely
-// different situations hide behind it, and the UI must not conflate them:
+// SATCAT listed ~975 on-orbit objects with a DATA_STATUS_CODE instead of a GP
+// record on 2026-08-12, and orbit-data passes that through as `dataStatus`.
+// (Counts here are that snapshot, not fixed facts.) Two genuinely different
+// situations hide behind the code, and the UI must not conflate them:
 //
-//   - 734 Earth-orbiting objects (overwhelmingly classified US payloads) whose
+//   - ~734 Earth-orbiting objects (overwhelmingly classified US payloads) whose
 //     elements are withheld. USA 224 — NORAD 37348, COSPAR 2011-002A — is the
 //     canonical one: a real, ordinary sun-synchronous orbit that CelesTrak has
 //     never published a TLE or OMM for, and never will. Nothing is broken; the
 //     data simply is not published.
-//   - 241 deep-space probes (Pioneer, Mariner, Ranger …) orbiting the Sun or
+//   - ~241 deep-space probes (Pioneer, Mariner, Ranger …) orbiting the Sun or
 //     another body, sitting at a Lagrange point, or — Pioneer 10 — leaving the
 //     solar system entirely. For those, "no TLE" is a category error rather
 //     than a restriction: there is no Earth orbit for an element set to

@@ -45,14 +45,16 @@ coverage footprint.
   ground track, and footprint; let the camera follow it. Toggle layers
   (Starlink, GNSS, OneWeb, GEO, stations) or load all ~12,000 active satellites.
 - **Objects with no element set.** Not everything in the catalogue can be
-  propagated. 975 on-orbit objects have no published orbital elements: 734
-  Earth-orbiting ones whose elements are withheld — USA 224 (NORAD 37348) is the
-  classic case, a catalogued NRO payload CelesTrak has never published a TLE or
-  OMM for — and 241 deep-space probes that orbit the Sun or another body and so
-  have no Earth orbit at all. They stay findable in search, and their catalogue
-  record says which of the two they are instead of looking like a failed fetch.
-  Where SATCAT has an approximate orbit it is shown, labelled approximate and
-  not usable for pointing or pass prediction.
+  propagated. As of the 2026-08-12 SATCAT, roughly 975 on-orbit objects have no
+  published orbital elements — about 734 of them in Earth orbit, the rest not.
+  They stay findable in search, and their catalogue record says which case they
+  are rather than looking like a failed fetch: elements withheld (USA 224, NORAD
+  37348 — a catalogued NRO payload CelesTrak has never published a TLE or OMM
+  for), orbiting another body (the deep-space probes), sitting at a Lagrange
+  point or leaving the solar system entirely — Pioneer 10 orbits nothing at all
+  — or docked to another catalogued object, which is still Earth orbit. Where
+  SATCAT has an approximate orbit it is shown, labelled approximate and not
+  usable for pointing or pass prediction.
 - **Reentry mode.** A separate view built on CelesTrak's decaying-object watch
   list (`SPECIAL=DECAYING`). Because those records carry only orbital elements,
   Orbit derives the *when* and *where* in the browser: it propagates each object

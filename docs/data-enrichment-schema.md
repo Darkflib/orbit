@@ -146,7 +146,9 @@ complex. Values illustrative (build job fills them from live sources).
 
 ### 2.1 Objects with no element set
 
-975 on-orbit objects are catalogued without orbital elements. SATCAT records why
+As of the 2026-08-12 SATCAT, roughly 975 on-orbit objects are catalogued
+without orbital elements (every count in this section is that snapshot, not a
+fixed fact). SATCAT records why
 in `DATA_STATUS_CODE`, which orbit-data publishes as `dataStatus`. The client
 ([`elementStatus`](../src/enrichment.js)) splits them into the two cases they
 actually are, because one explanation would be wrong for half of them:
