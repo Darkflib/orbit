@@ -214,19 +214,25 @@ html, body {
 }
 .search-results.hidden { display: none; }
 .search-opt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   padding: 9px 10px;
   border-radius: 6px;
   font-size: 0.82rem;
   color: var(--text);
   cursor: pointer;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   /* Stops a tap being treated as the start of a scroll/selection gesture. */
   touch-action: manipulation;
 }
 .search-opt:hover,
 .search-opt.active { background: var(--accent-dim); color: var(--accent); }
+.search-opt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A match that only exists in the catalogue — choosing it opens its record
+   rather than selecting something in 3D, so the row says so up front. */
+.search-opt-meta { flex: none; font-size: 0.68rem; color: var(--subtle); }
+.search-note { padding: 9px 10px; font-size: 0.78rem; color: var(--subtle); }
 
 /* ---------- Readout ---------- */
 .readout { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
@@ -699,6 +705,18 @@ body.mode-sky #sky-section { display: block; }
 .bright-telescope  { background: rgba(148, 163, 184, 0.16); color: #94a3b8; border-color: rgba(148, 163, 184, 0.28); }
 /* Estimated (per-constellation) magnitudes: dashed border signals "not measured". */
 .badge-est { border-style: dashed; }
+
+/* ---------- Objects with no element set ----------
+   Deliberately neutral, not a warning colour: an object whose elements are not
+   published (USA 224) or which is not in Earth orbit at all (the deep-space
+   probes) is a normal catalogue entry, not an error state. */
+.data-status { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.badge.no-elements {
+  background: rgba(148, 163, 184, 0.16); color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.32);
+}
+.data-status-note { margin: 0 0 10px; font-size: 0.78rem; line-height: 1.45; color: var(--subtle); }
+.approx-orbit { margin-bottom: 10px; }
 
 /* Catalogue tab active state */
 #mode-catalogue.active { background: rgba(52, 211, 153, 0.16); color: #34d399; }

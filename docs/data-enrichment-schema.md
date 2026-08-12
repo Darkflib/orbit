@@ -75,6 +75,14 @@ record is the union of whatever sources resolved.
   "decayDate": null,             // ISO date if decayed/reentered
   "status": "in-orbit",          // in-orbit | decayed | landed | unknown (GCAT)
 
+  // ---- element availability (§2.1) ----
+  "dataStatus": null,            // null when elements are published; otherwise
+                                 // no-current-elements | no-initial-elements | no-elements-available
+  "orbitCenter": "earth",        // body orbited, friendly and lower-cased ("earth", "sun",
+                                 // "moon", "mars"); a raw SATCAT code if unmapped
+  "approximateOrbit": null,      // { periodMinutes, inclinationDeg, apogeeKm, perigeeKm },
+                                 // each float|null — catalogue values, not an element set
+
   // ---- provenance ----
   "_sources": {                  // which source won each field (attribution + trust)
     "owner": "gcat",
@@ -135,6 +143,43 @@ complex. Values illustrative (build job fills them from live sources).
 }
 ```
 
+### 2.1 Objects with no element set
+
+975 on-orbit objects are catalogued without orbital elements. SATCAT records why
+in `DATA_STATUS_CODE`, which orbit-data publishes as `dataStatus`. The client
+([`elementStatus`](../src/enrichment.js)) splits them into the two cases they
+actually are, because one explanation would be wrong for half of them:
+
+| Case | Count | What the UI says |
+|---|--:|---|
+| Earth-orbiting, elements withheld | 734 (694 US) | "No public element set" — orbital data for this object is not published |
+| Not in Earth orbit (deep-space probes) | 241 | "Not in Earth orbit" — it orbits the Sun (or another body), so there is no Earth orbit to describe |
+
+The canonical Earth-orbiting case is **USA 224** (NORAD 37348, COSPAR
+2011-002A), a classified NRO payload: CelesTrak has never published a TLE or OMM
+for it and never will, so before this the object rendered exactly like a failed
+fetch — and was reported as a missing satellite.
+
+```jsonc
+{
+  "norad": "37348", "name": "USA 224", "cospar": "2011-002A",
+  "objectType": "payload", "opsStatus": "operational", "country": "US",
+  "dataStatus": "no-elements-available", "orbitCenter": "earth",
+  "approximateOrbit": { "periodMinutes": 96.7, "inclinationDeg": 97.94,
+                        "apogeeKm": 948, "perigeeKm": 258 }
+}
+```
+
+411 of the Earth-orbiting ones carry an `approximateOrbit`. It is shown, always
+labelled approximate and explicitly not usable for pointing or pass prediction:
+these are catalogue values with no epoch, so nothing can be propagated from them
+— and nothing in the app tries to.
+
+All three fields are **additive**: `schemaVersion` is unchanged and a tree
+published before orbit-data shipped them carries none of them, so the client
+treats each as optional and renders exactly as it did before when they are
+absent.
+
 ### Field → source map (what each source actually supplies)
 
 UCS is **not adopted in v1** (see §5) — its column is kept only to show what we
@@ -194,7 +239,8 @@ dragging the full historical catalogue in. (The live tracker still only plots
 active objects — this window only affects which records have *enrichment*.)
 
 1. **`data/catalog-index.json`** — lean, for the catalogue browse/filter list.
-   `[{ norad, name, objectType, country, opsStatus, stdMag }]`.
+   `[{ norad, name, objectType, country, opsStatus, stdMag }]`, plus
+   `dataStatus` on the rows that have one (§2.1), where the index carries it.
    Small enough to load once; drives search/sort/filter without per-object fetches.
 
 2. **`data/enrichment/<bucket>.json`** — the full records above, **bucketed by

@@ -18,6 +18,7 @@ import {
 } from './reentry.js';
 import {
   getEnrichment, loadIndex, loadManifest, brightnessClass,
+  elementStatus, approximateOrbitRows, APPROXIMATE_ORBIT_NOTE,
 } from './enrichment.js';
 import { createSkyView } from './skyview.js';
 
@@ -538,13 +539,25 @@ function buildSkipButtons() {
 //
 // It also drops the old 4000-name cap: matching runs over the whole catalogue
 // and only the top few results are built into DOM.
+//
+// The field only holds objects with orbital elements, so a name it does not
+// have used to produce an empty list and no explanation — which is how USA 224
+// (NORAD 37348), a catalogued object CelesTrak publishes no elements for, came
+// to be reported as missing. When the field has no match the search falls back
+// to the catalogue index, which does list it, and the chosen result opens its
+// catalogue record rather than trying to select something in 3D.
 const SEARCH_LIMIT = 40;
+const CATALOGUE_SEARCH_LIMIT = 12;
+// The index is ~5 MB, so the fallback waits for a query worth spending it on.
+const CATALOGUE_SEARCH_MIN = 3;
 // How far a pointer may travel between down and up and still count as a tap
 // rather than a scroll. Matches the 6px the canvas click/drag test uses, with a
 // little more slack for a thumb.
 const TAP_SLOP = 10;
 let searchNames = [];      // lower-cased names, parallel to field.records
-let searchMatches = [];    // field indices currently offered
+let searchMatches = [];    // options offered (searchCandidates / catalogueCandidates)
+let searchNote = '';       // shown instead of options when there are none
+let searchSeq = 0;         // guards an in-flight catalogue lookup
 let searchActive = -1;     // index into searchMatches, or -1 for none
 let searchPointer = null;  // { id, x, y } of an in-progress press on an option
 
@@ -552,6 +565,8 @@ let searchPointer = null;  // { id, x, y } of an in-progress press on an option
 // actually cost something, so it happens once per catalogue load instead.
 function buildSearchIndex() {
   searchNames = field.records.map((r) => r.name.toLowerCase());
+  searchMatches = [];
+  searchNote = '';
   closeSearchResults();
 }
 
@@ -570,20 +585,53 @@ function searchCandidates(query) {
   const byName = (a, b) => searchNames[a].localeCompare(searchNames[b]);
   prefix.sort(byName);
   anywhere.sort(byName);
-  return prefix.concat(anywhere).slice(0, SEARCH_LIMIT);
+  return prefix.concat(anywhere)
+    .slice(0, SEARCH_LIMIT)
+    .map((i) => ({ kind: 'field', fieldIndex: i, name: field.records[i].name }));
+}
+
+// The same ranking over the catalogue index — every catalogued object, not just
+// the propagatable ones. Rows are defensive about their shape: the index is
+// fetched, and a malformed one must degrade to "no match", not throw.
+async function catalogueCandidates(query) {
+  const q = query.trim().toLowerCase();
+  if (q.length < CATALOGUE_SEARCH_MIN) return [];
+  const index = await loadIndex();
+  if (!Array.isArray(index)) return [];
+  const prefix = [];
+  const anywhere = [];
+  for (const r of index) {
+    const norad = String(r?.norad ?? '');
+    const name = String(r?.name ?? '') || `NORAD ${norad}`;
+    const at = name.toLowerCase().indexOf(q);
+    if (at < 0 && !norad.startsWith(q)) continue;
+    const opt = { kind: 'catalogue', norad, name, dataStatus: r?.dataStatus ?? null };
+    (at === 0 || norad.startsWith(q) ? prefix : anywhere).push(opt);
+  }
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  prefix.sort(byName);
+  anywhere.sort(byName);
+  return prefix.concat(anywhere).slice(0, CATALOGUE_SEARCH_LIMIT);
 }
 
 function renderSearchResults() {
   const list = $('search-results');
   list.innerHTML = '';
   const frag = document.createDocumentFragment();
-  searchMatches.forEach((recIdx, i) => {
+  searchMatches.forEach((opt, i) => {
     const li = document.createElement('li');
     li.id = `search-opt-${i}`;
     li.className = 'search-opt';
     li.setAttribute('role', 'option');
     li.setAttribute('aria-selected', String(i === searchActive));
-    li.textContent = field.records[recIdx].name;
+    // A catalogue-only match says so, so choosing it is not a surprise. The
+    // "no element set" wording only appears where the index carries dataStatus.
+    const meta = opt.kind === 'catalogue'
+      ? (opt.dataStatus ? 'no element set' : 'catalogue')
+      : '';
+    li.innerHTML =
+      `<span class="search-opt-name">${escapeHtml(opt.name)}</span>` +
+      (meta ? `<span class="search-opt-meta">${escapeHtml(meta)}</span>` : '');
     // Commit on pointer *up*, and only if the pointer barely moved. Committing
     // on pointerdown (the obvious way to beat the blur that closes the list)
     // makes the list impossible to scroll on a phone: the first touch of a
@@ -604,13 +652,23 @@ function renderSearchResults() {
     });
     frag.appendChild(li);
   });
+  // A search that finds nothing says so, rather than closing silently — an
+  // empty popup is what made a catalogued-but-unpropagatable object look like
+  // a broken search.
+  if (!searchMatches.length && searchNote) {
+    const li = document.createElement('li');
+    li.className = 'search-note';
+    li.setAttribute('role', 'presentation');
+    li.textContent = searchNote;
+    frag.appendChild(li);
+  }
   list.appendChild(frag);
   syncSearchActive();
 }
 
 function syncSearchActive() {
   const list = $('search-results');
-  [...list.children].forEach((li, i) => {
+  [...list.querySelectorAll('.search-opt')].forEach((li, i) => {
     const on = i === searchActive;
     li.classList.toggle('active', on);
     li.setAttribute('aria-selected', String(on));
@@ -643,7 +701,7 @@ function positionSearchResults() {
 }
 
 function openSearchResults() {
-  if (!searchMatches.length) return closeSearchResults();
+  if (!searchMatches.length && !searchNote) return closeSearchResults();
   $('search-results').classList.remove('hidden');
   $('search').setAttribute('aria-expanded', 'true');
   positionSearchResults();
@@ -659,17 +717,50 @@ function closeSearchResults() {
 // Select the match at `i` (defaulting to the highlighted one, or the best one if
 // the user just pressed Enter without arrowing).
 function commitSearch(i = searchActive < 0 ? 0 : searchActive) {
-  const recIdx = searchMatches[i];
-  if (recIdx == null) return;
-  $('search').value = field.records[recIdx].name;
+  const opt = searchMatches[i];
+  if (!opt) return;
+  $('search').value = opt.name;
   closeSearchResults();
   $('search').blur(); // on a phone, dismiss the keyboard so the sky is visible
-  selectIndex(recIdx, true);
+  if (opt.kind === 'field') { selectIndex(opt.fieldIndex, true); return; }
+  // Nothing to select in 3D: the object is not in the field, and if it has no
+  // element set it never can be. Its catalogue record carries the explanation.
+  showCatalogueRecord(opt.norad, opt.name)
+    .catch((err) => toast(`Catalogue unavailable (${err.message})`));
+}
+
+// Open the Catalogue browser on one object, from a search result. Filters are
+// cleared so the row cannot be hidden by whatever the browser was last set to.
+async function showCatalogueRecord(norad, name) {
+  $('cat-type').value = '';
+  $('cat-bright').value = '';
+  $('cat-search').value = name || String(norad);
+  await openCatalogue();
+  const li = [...$('cat-list').children].find((el) => el.dataset.norad === String(norad));
+  if (li) li.scrollIntoView({ block: 'nearest' });
+  await selectCatRow(norad, li);
 }
 
 function onSearchInput() {
-  searchMatches = searchCandidates($('search').value);
+  const query = $('search').value;
+  const seq = ++searchSeq;
+  searchMatches = searchCandidates(query);
   searchActive = -1;
+  searchNote = '';
+  // Only when the loaded field has nothing: the index costs a fetch, and a
+  // query that already matches something in 3D does not need it.
+  if (!searchMatches.length && query.trim().length >= CATALOGUE_SEARCH_MIN) {
+    searchNote = 'Searching the full catalogue…';
+    catalogueCandidates(query)
+      .catch(() => [])
+      .then((opts) => {
+        if (seq !== searchSeq) return; // superseded by a later keystroke
+        searchMatches = opts;
+        searchNote = opts.length ? '' : 'No match in the catalogue.';
+        renderSearchResults();
+        openSearchResults();
+      });
+  }
   renderSearchResults();
   openSearchResults();
 }
@@ -1025,7 +1116,32 @@ function enrichRows(rec) {
   return rows;
 }
 
-function renderEnrich(rec, { readoutEl, badgeEl, sourcesEl }) {
+// Explain an object that has no orbital elements — see enrichment.js for the
+// two cases and why they read differently. Rendered as ordinary content, never
+// as an error: "nothing to propagate" is a fact about the published catalogue,
+// not a failed fetch.
+function renderElementStatus(rec, el) {
+  const st = elementStatus(rec);
+  if (!st) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  const rows = approximateOrbitRows(st.approximateOrbit);
+  el.innerHTML =
+    '<div class="enrich-head"><span class="field-label">Orbital data</span>' +
+    `<span class="badge no-elements">${escapeHtml(st.label)}</span></div>` +
+    `<p class="data-status-note">${escapeHtml(st.detail)}</p>` +
+    (rows.length
+      ? '<span class="field-label">Approximate orbit</span>' +
+        `<dl class="readout approx-orbit">${rows
+          .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`)
+          .join('')}</dl>` +
+        `<p class="data-status-note">${escapeHtml(APPROXIMATE_ORBIT_NOTE)}</p>`
+      : '');
+  el.classList.remove('hidden');
+}
+
+// `statusEl` is optional: the selection panel omits it, because everything in
+// the 3D field propagated from a real element set to get there, so a "no
+// elements published" notice under a live readout could only contradict it.
+function renderEnrich(rec, { readoutEl, badgeEl, sourcesEl, statusEl }) {
   readoutEl.innerHTML = enrichRows(rec)
     .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`)
     .join('');
@@ -1047,6 +1163,7 @@ function renderEnrich(rec, { readoutEl, badgeEl, sourcesEl }) {
       ? `Sources: ${srcs.map((s) => SRC_LABEL[s] || s).join(' · ')}`
       : '';
   }
+  if (statusEl) renderElementStatus(rec, statusEl);
 }
 
 // Lazily fill the selection panel's enrichment block. Guarded against a
@@ -1131,7 +1248,9 @@ function renderCatList() {
       `<span class="cat-name">${escapeHtml(r.name || `NORAD ${r.norad}`)}</span>` +
       `<span class="cat-meta">${escapeHtml(r.norad)}` +
       `${r.objectType ? ` · ${escapeHtml(TYPE_SHORT[r.objectType] || r.objectType)}` : ''}` +
-      `${r.country ? ` · ${escapeHtml(r.country)}` : ''}</span>` +
+      `${r.country ? ` · ${escapeHtml(r.country)}` : ''}` +
+      // Only present once the index carries dataStatus; absent on older trees.
+      `${r.dataStatus ? ' · no element set' : ''}</span>` +
       (b
         ? `<span class="badge tiny bright-${b.key}${r.magEst ? ' badge-est' : ''}"` +
           `${r.magEst ? ' title="Estimated (constellation typical)"' : ''}>` +
@@ -1159,21 +1278,31 @@ async function selectCatRow(norad, li) {
     `<h3>${escapeHtml(rec.name || `NORAD ${norad}`)}</h3>` +
     '<div class="enrich-head"><span id="cat-detail-badge" class="badge hidden"></span></div>' +
     '<dl class="readout" id="cat-detail-readout"></dl>' +
+    '<div id="cat-detail-status" class="data-status hidden"></div>' +
     '<p id="cat-detail-sources" class="enrich-sources"></p>' +
     '<div class="cat-detail-actions"></div>';
   renderEnrich(rec, {
     readoutEl: $('cat-detail-readout'),
     badgeEl: $('cat-detail-badge'),
     sourcesEl: $('cat-detail-sources'),
+    statusEl: $('cat-detail-status'),
   });
 
   // Offer a jump into the 3D view only when the object is in the loaded field.
   const fieldIdx = field.records.findIndex((x) => x.norad === String(norad));
+  const status = elementStatus(rec);
   const btn = document.createElement('button');
   if (fieldIdx >= 0) {
     btn.className = 'wide-btn';
     btn.textContent = 'Show in 3D';
     btn.addEventListener('click', () => { closeCatalogue(); selectIndex(fieldIdx, true); });
+  } else if (status) {
+    // No element set means no orbit to propagate — loading another layer will
+    // never bring this object into the field, so don't imply that it might.
+    btn.className = 'wide-btn ghost';
+    btn.textContent = 'Cannot be shown in 3D';
+    btn.disabled = true;
+    btn.title = status.detail;
   } else {
     btn.className = 'wide-btn ghost';
     btn.textContent = 'Not in current view';

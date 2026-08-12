@@ -1,5 +1,76 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-12 — "USA 224 is missing": objects with no element set
+
+A user searched for USA 224 (NORAD 37348, COSPAR 2011-002A) and reported it as a
+missing satellite. Nothing was broken. It is a classified NRO payload: CelesTrak
+lists it in SATCAT with `DATA_STATUS_CODE = NEA` and has never published a TLE or
+OMM for it. The app had no way to say so — the field search only knows objects
+with elements, so the suggestion list came back empty and closed itself, which is
+indistinguishable from a failed fetch.
+
+### Two cases, not one
+975 on-orbit objects have no element set, and lumping them together would be
+wrong for half of them:
+
+- **734 Earth-orbiting** (694 US, overwhelmingly classified military). A real
+  orbit whose elements are simply not published. 411 of them still have an
+  approximate orbit in SATCAT.
+- **241 deep-space probes** (Pioneer, Mariner, Ranger …) orbiting the Sun or
+  another body. "No TLE" is a category error there — there is no Earth orbit for
+  an element set to describe, and an Earth-orbit period/apogee would be nonsense,
+  so the approximation is dropped for them even when the record carries one.
+
+### The data contract
+`orbit-data` adds three additive fields to the enrichment records —`dataStatus`
+(null, or one of `no-current-elements` / `no-initial-elements` /
+`no-elements-available`), `orbitCenter` (friendly lower-case body name, or a raw
+SATCAT code when unmapped) and `approximateOrbit` (`periodMinutes`,
+`inclinationDeg`, `apogeeKm`, `perigeeKm`, each nullable). `schemaVersion` does
+not change, so **the deployed tree carries none of them until orbit-data
+republishes**. Every read treats all three as optional; with them absent the app
+renders exactly as it did before, which was checked in a browser against the
+committed snapshot rather than assumed.
+
+One deliberate piece of paranoia: an unmapped `orbitCenter` arrives as its raw
+SATCAT code, and misreading Earth's own code (`EA`) would tell a user their
+satellite had left Earth orbit. `isEarthOrbit` therefore accepts `earth`, `ea`
+and absent, and only then treats a centre as non-Earth.
+
+### What landed
+- **`src/enrichment.js`** — `elementStatus()` (the null-or-explanation decision,
+  including the Earth/deep-space split), `orbitCenterName()`,
+  `approximateOrbitRows()`, `APPROXIMATE_ORBIT_NOTE`. Pure and unit-tested.
+- **`src/main.js`** — the search falls back to the catalogue index when the
+  loaded field has no match, so USA 224 is findable from the box the user
+  actually used; choosing a catalogue-only result opens its catalogue record
+  instead of trying to select something in 3D. A query that matches nothing at
+  all now says so rather than closing the list silently. The catalogue detail
+  pane renders the explanation and the approximate orbit, and its 3D button
+  reads "Cannot be shown in 3D" rather than implying another layer would help.
+- **Deliberately not in the selection panel.** Everything in the 3D field
+  propagated from a real element set to get there, so a "not published" notice
+  under a live position readout could only contradict it. `renderEnrich` takes
+  `statusEl` as optional and the selection panel omits it.
+- Neutral grey styling, not a warning colour: this is a normal catalogue entry,
+  not an error state.
+
+### Verified
+`npm test` (104 tests, 9 new in `test/enrichment.test.mjs`). Two throwaway
+Playwright drivers on top of `scripts/dev/harness.mjs`, because the whole defect
+was a UI absence a unit test cannot see: one with the new fields stubbed in
+(15/15 — search offers USA 224, the record explains itself, the approximate orbit
+renders with its caveat, a heliocentric probe reads differently, an ordinary
+search still selects in 3D, no console errors), one against the *current*
+published snapshot with none of the new fields (search still finds it, no
+half-rendered notice, old wording intact).
+
+### Not done
+Nothing propagates for these objects — they never enter `field.records`, because
+`gp.js` only ever sees objects CelesTrak publishes elements for, and
+`SatelliteField.load` discards anything `json2satrec` cannot build. So there was
+no propagation path to guard, only paths not to add.
+
 ## 2026-08-10 — Retiring the enrichment pipeline: one catalogue, mirrored
 
 `orbit-data` now produces the same catalogue this repo's `scripts/enrich/` build
