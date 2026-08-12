@@ -1,5 +1,131 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-12 — "USA 224 is missing": objects with no element set
+
+A user searched for USA 224 (NORAD 37348, COSPAR 2011-002A) and reported it as a
+missing satellite. Nothing was broken. It is a classified NRO payload: CelesTrak
+lists it in SATCAT with `DATA_STATUS_CODE = NEA` and has never published a TLE or
+OMM for it. The app had no way to say so — the field search only knows objects
+with elements, so the suggestion list came back empty and closed itself, which is
+indistinguishable from a failed fetch.
+
+### Two cases, not one
+975 on-orbit objects have no element set, and lumping them together would be
+wrong for half of them:
+
+- **734 Earth-orbiting** (694 US, overwhelmingly classified military). A real
+  orbit whose elements are simply not published. 411 of them still have an
+  approximate orbit in SATCAT.
+- **241 deep-space probes** (Pioneer, Mariner, Ranger …) orbiting the Sun or
+  another body. "No TLE" is a category error there — there is no Earth orbit for
+  an element set to describe, and an Earth-orbit period/apogee would be nonsense,
+  so the approximation is dropped for them even when the record carries one.
+
+### The data contract
+`orbit-data` adds three additive fields to the enrichment records —`dataStatus`
+(null, or one of `no-current-elements` / `no-initial-elements` /
+`no-elements-available`), `orbitCenter` (friendly lower-case body name, or a raw
+SATCAT code when unmapped) and `approximateOrbit` (`periodMinutes`,
+`inclinationDeg`, `apogeeKm`, `perigeeKm`, each nullable). `schemaVersion` does
+not change, so **the deployed tree carries none of them until orbit-data
+republishes**. Every read treats all three as optional; with them absent the app
+renders exactly as it did before, which was checked in a browser against the
+committed snapshot rather than assumed.
+
+One deliberate piece of paranoia: an unmapped `orbitCenter` arrives as its raw
+SATCAT code, and misreading Earth's own code (`EA`) would tell a user their
+satellite had left Earth orbit. `isEarthOrbit` therefore accepts `earth`, `ea`
+and absent, and only then treats a centre as non-Earth.
+
+### Follow-up, same day: the full `orbitCenter` set, and the docked case
+
+The published centres turned out to be more than bodies, so "orbits X" was the
+wrong sentence for a third of them. Now classified four ways:
+
+- **Bodies** (`sun`, `moon`, the planets, `asteroid`, `comet`) — "orbits the
+  Sun, not Earth".
+- **Earth-system places** (`earth-lagrange`, `earth-sun-l1`…`l5`,
+  `earth-moon-barycenter`) and `solar-system-escape` — "is at the Earth–Sun L2
+  point, not in Earth orbit", "is on an escape trajectory out of the solar
+  system". Nothing here is *orbited*: Pioneer 10 does not orbit its own
+  trajectory.
+- **A numeric centre is the host object's catalog number**, which SATCAT uses
+  for a docked object — and a module docked to the ISS is very much in Earth
+  orbit. The naive fallback would have rendered "orbits 25544, not Earth". It is
+  now Earth-orbiting, keeps its approximate orbit, and reads "docked to NORAD
+  25544". No SATCAT row currently carries both a numeric centre and a
+  `dataStatus`, so this is a guard against a latent case, with a test so it
+  cannot regress.
+- **Anything unrecognised** is reported rather than guessed at ("not in Earth
+  orbit (catalogue centre: XX)") — claiming an object orbits a string we do not
+  understand is worse than admitting we do not know.
+
+`dataStatus` also lands in `catalog-index.json`, sparse in the same idiom as
+`magEst` (written only when non-null), so ~978 of 36,205 rows carry it and the
+client keeps treating the key as optional.
+
+### What landed
+- **`src/enrichment.js`** — `elementStatus()` (the null-or-explanation decision,
+  including the Earth/deep-space split), `orbitCenterName()`,
+  `approximateOrbitRows()`, `APPROXIMATE_ORBIT_NOTE`. Pure and unit-tested.
+- **`src/main.js`** — the search falls back to the catalogue index when the
+  loaded field has no match, so USA 224 is findable from the box the user
+  actually used; choosing a catalogue-only result opens its catalogue record
+  instead of trying to select something in 3D. A query that matches nothing at
+  all now says so rather than closing the list silently. The catalogue detail
+  pane renders the explanation and the approximate orbit, and its 3D button
+  reads "Cannot be shown in 3D" rather than implying another layer would help.
+- **Deliberately not in the selection panel.** Everything in the 3D field
+  propagated from a real element set to get there, so a "not published" notice
+  under a live position readout could only contradict it. `renderEnrich` takes
+  `statusEl` as optional and the selection panel omits it.
+- Neutral grey styling, not a warning colour: this is a normal catalogue entry,
+  not an error state.
+
+### Review follow-up: the field having *a* match is not the same as the right one
+
+The first cut only consulted the catalogue when the field search returned
+nothing. Two reviewers found the same hole independently, and it defeats the
+feature for exactly the object it was built for: with the default Starlink layer
+loaded, `37348` substring-matches the **name** STARLINK-37348 (NORAD 68737), so
+the field is non-empty, the catalogue is never asked, and USA 224 is silently
+absent while a different satellite is offered in its place. A cheap-looking
+guard turned into a wrong answer that looks like a right one.
+
+Both sets are now always searched and merged, de-duplicated by NORAD (the field
+copy wins — only it can be shown in 3D) and ranked together: exact catalog
+number, exact name, name prefix, catalog-number prefix, then anywhere in the
+name. The ranking is the point of the merge, not a detail of it, so it moved
+into a new pure `src/search.js` with the collision case pinned by a test. Field
+results still render immediately and the catalogue merges in when it lands, so
+the common case never waits on the fetch.
+
+The same review caught a second real bug: dismissing the list with Escape (or by
+blurring the input) while the index request was in flight did not invalidate it,
+so the popup reappeared when the response landed. `closeSearchResults` now bumps
+the sequence counter that guards the handler, which covers Escape, blur, commit
+and a catalogue reload alike. That one is DOM timing with no seam a `node --test`
+can reach; it is checked in the browser driver instead.
+
+### Verified
+`npm test` — 115 tests, 115 pass (11 in `test/enrichment.test.mjs`, 9 in
+`test/search.test.mjs`). Throwaway Playwright drivers on top of
+`scripts/dev/harness.mjs`, because most of this defect was a UI absence a unit
+test cannot see: one with the new fields stubbed in (21/21 — search offers USA
+224 *and* ranks it above the colliding Starlink name, the record explains
+itself, the approximate orbit renders with its caveat, a heliocentric probe and
+an escape trajectory read differently, a docked object stays in Earth orbit, an
+Escape keypress mid-fetch stays dismissed, an ordinary search still selects in
+3D, no console errors), one against the *current* published snapshot with none
+of the new fields (search still finds it, no half-rendered notice, old wording
+intact).
+
+### Not done
+Nothing propagates for these objects — they never enter `field.records`, because
+`gp.js` only ever sees objects CelesTrak publishes elements for, and
+`SatelliteField.load` discards anything `json2satrec` cannot build. So there was
+no propagation path to guard, only paths not to add.
+
 ## 2026-08-10 — Retiring the enrichment pipeline: one catalogue, mirrored
 
 `orbit-data` now produces the same catalogue this repo's `scripts/enrich/` build
