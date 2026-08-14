@@ -114,7 +114,11 @@ self.addEventListener('message', (event) => {
   // depth rather than a hole being closed. It is cheap, and inheriting a
   // security property from the platform without stating it is how it gets
   // quietly lost later.
-  if (event.origin !== self.location.origin) return;
+  // `location.origin`, not `self.location.origin`: identical at runtime (a
+  // worker's `location` *is* `self.location`), but CodeQL's missing-origin-check
+  // query kept flagging the `self.`-qualified form, apparently not modelling it
+  // as the origin inside a ServiceWorkerGlobalScope.
+  if (event.origin !== location.origin) return;
 
   const type = event.data && event.data.type;
   if (type === 'SKIP_WAITING') {
