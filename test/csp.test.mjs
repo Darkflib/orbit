@@ -38,20 +38,25 @@ test('the CSP sha256 allow-list matches the inline import map', () => {
   );
 });
 
-test('the CSP permits the CDN-backed module worker and its source maps', () => {
-  assert.deepEqual(
-    directives['worker-src'],
-    ["'self'", 'https://cdn.jsdelivr.net'],
-    'worker-src must allow the satellite.js import used by the module worker',
-  );
+test('nothing executable may load from a third-party origin', () => {
+  // The libraries and textures are vendored, so any external host reappearing
+  // in one of these directives means something slipped back onto a CDN — which
+  // would also break the service worker's pre-cache, since opaque cross-origin
+  // responses cannot be relied on offline.
+  for (const directive of ['script-src', 'worker-src', 'img-src', 'style-src']) {
+    const external = (directives[directive] ?? []).filter((s) => s.startsWith('http'));
+    assert.deepEqual(
+      external,
+      [],
+      `${directive} must not allow external origins, found: ${external.join(', ')}`,
+    );
+  }
+});
+
+test('connect-src allows exactly the two data origins', () => {
   assert.deepEqual(
     directives['connect-src'],
-    [
-      "'self'",
-      'https://cdn.jsdelivr.net',
-      'https://orbit-data.mikepreston.org',
-      'https://celestrak.org',
-    ],
-    'connect-src must allow developer tools to fetch jsDelivr source maps',
+    ["'self'", 'https://orbit-data.mikepreston.org', 'https://celestrak.org'],
+    'connect-src is the mirror plus the CelesTrak fallback, and nothing else',
   );
 });

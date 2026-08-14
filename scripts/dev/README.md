@@ -30,7 +30,8 @@ could have:
 npm start                        # serve the app on :8080
 npm install --no-save playwright # not a dependency; install when you need it
 
-node scripts/dev/smoke.mjs
+node scripts/dev/smoke.mjs       # boots, renders, responds to input
+node scripts/dev/offline.mjs     # installs the worker, cuts the network, reloads
 ```
 
 Environment:
@@ -38,45 +39,27 @@ Environment:
 | Variable | Purpose |
 |---|---|
 | `ORBIT_ORIGIN` | Where the app is served. Default `http://127.0.0.1:8080`. |
-| `ORBIT_OFFLINE_CDN=1` | Serve the import-map modules from `node_modules` instead of jsDelivr. |
 | `ORBIT_CHROMIUM` | Explicit Chromium path, for sandboxes that pre-install it outside Playwright's cache. |
 
-## Offline mode
+There used to be an `ORBIT_OFFLINE_CDN=1` mode that routed the import-map
+modules to `node_modules`, for runners with no path to jsDelivr. It is gone:
+the libraries and Earth textures are vendored under `vendor/` and served from
+the app's own origin, so every run is already offline in that sense — and,
+unlike the old mode, exercises the real CSP rather than stripping it.
 
-Only needed where `cdn.jsdelivr.net` is unreachable — a locked-down runner or
-sandbox — in which case the page cannot boot at all. It maps each import-map
-entry to its `node_modules` equivalent, reading the pinned versions **from
-`index.html` itself** so bumping a version cannot leave the harness mapping a
-URL the app no longer requests.
+## Service workers and request interception
 
-```bash
-# satellite.js and astronomy-engine are already devDeps at the pinned versions.
-npm install --no-save playwright three@0.160.0
-ORBIT_OFFLINE_CDN=1 node scripts/dev/smoke.mjs
-```
+`context.route()` does **not** intercept requests a service worker makes on the
+page's behalf. This matters more than it sounds:
 
-Two things about that install line, both learned by tripping over them:
-
-- **Install everything in one command.** `npm install --no-save` reconciles the
-  tree against `package.json` afterwards, so a second `--no-save` install prunes
-  whatever the first one added. Installing Playwright on its own silently
-  removed `three`.
-- **The version must be the pinned one**, not just `three`. Current releases
-  split `three.module.js` into a sibling `three.core.js` that the import map
-  knows nothing about, so the route 404s and the page hangs on the loading
-  overlay with nothing in the console to explain it. `installOfflineCdn` now
-  compares `node_modules` against the import map and fails with the exact
-  install command instead.
-
-Two caveats, both deliberate:
-
-- Offline mode also **strips the page CSP**. The propagation worker imports
-  satellite.js straight from the CDN, and a route-fulfilled response in a worker
-  context is refused under the page policy — the worker never starts and every
-  satellite sits at the origin. So offline runs do *not* exercise the real CSP;
-  the default run does, which is why it is the default.
-- Earth textures are replaced with a blank pixel, so the globe renders an odd
-  flat colour. That is expected and says nothing about the code.
+- `smoke.mjs` stubs the element sources with `stubElementSources`, so it sets
+  `serviceWorkers: 'block'`. Without that the stubs are bypassed, the run boots
+  against the real network, and the symptom is `0 satellites` plus three opaque
+  `ERR_FAILED`s with nothing pointing at the worker.
+- `offline.mjs` sets `serviceWorkers: 'allow'`, because there the worker *is*
+  the subject. It does not stub anything, so GP data is legitimately
+  unavailable once the network is cut; what it asserts is that the shell, the
+  vendored module graph and the textures all resolve from the pre-cache.
 
 ## Writing your own
 
@@ -84,7 +67,7 @@ Two caveats, both deliberate:
 
 ```js
 import {
-  installOfflineCdn, stripCsp, stubElementSources,
+  DEFAULT_ORIGIN, stubElementSources,
   seedObserver, collectErrors, makeRecords, REFERENCE_OBSERVER,
 } from './harness.mjs';
 ```

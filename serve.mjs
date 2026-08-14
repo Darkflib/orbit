@@ -34,6 +34,9 @@ const TYPES = {
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  // Served as application/octet-stream, a manifest is fetched but ignored and
+  // the app is silently not installable, with nothing in the console to say so.
+  '.webmanifest': 'application/manifest+json',
 };
 
 // Build a request handler that only ever serves files contained within `root`.

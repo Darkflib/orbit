@@ -2,44 +2,77 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!--
-    Content Security Policy. Locks scripts, styles, images, connections and
-    workers down to this origin plus the specific external hosts the app needs:
-      - script/img/worker from cdn.jsdelivr.net (three.js, satellite.js, astronomy-engine, Earth textures)
-      - connect to cdn.jsdelivr.net       (module source maps in developer tools)
+    `viewport-fit=cover` is what makes env(safe-area-inset-*) report anything
+    other than zero, so it is load-bearing for the notch/home-indicator padding
+    in main.css rather than cosmetic. `user-scalable=no` is deliberately NOT
+    set: pinch-zoom is an accessibility affordance, and the canvas handles its
+    own gestures without needing the page zoom disabled.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!--
+    Content Security Policy. Every executable and every image now comes from
+    this origin — the libraries and Earth textures are vendored under vendor/ —
+    so the only external hosts left are the two data sources:
       - connect to orbit-data.mikepreston.org (primary static data mirror)
       - connect to celestrak.org          (emergency GP fallback)
+    Dropping cdn.jsdelivr.net from script-src/worker-src/img-src is the security
+    half of vendoring: no third party can execute in this origin any more.
     The inline import map is allow-listed by its sha256 hash — if you change the
     import map you MUST recompute this hash (openssl / browser console) or the
-    map will be blocked. `object-src 'none'` and `base-uri 'self'` close off
-    plugin and <base>-hijacking vectors. (frame-ancestors is deliberately
-    omitted: it is ignored when delivered via <meta> and the app is hosted on
-    GitHub Pages, which cannot set response headers.)
+    map will be blocked; test/csp.test.mjs fails when the two drift apart.
+    `object-src 'none'` and `base-uri 'self'` close off plugin and
+    <base>-hijacking vectors. (frame-ancestors is deliberately omitted: it is
+    ignored when delivered via <meta> and the app is hosted on GitHub Pages,
+    which cannot set response headers.)
   -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
     base-uri 'self';
     object-src 'none';
-    script-src 'self' https://cdn.jsdelivr.net 'sha256-Y1zW/wPig1IAo9v4XKMdWCGjD4b9+ypEfU9FTOSPOR0=';
-    worker-src 'self' https://cdn.jsdelivr.net;
-    connect-src 'self' https://cdn.jsdelivr.net https://orbit-data.mikepreston.org https://celestrak.org;
-    img-src 'self' data: https://cdn.jsdelivr.net;
+    script-src 'self' 'sha256-5DDPIlTnTDqT/6xVAQ3h8qr3AGG8eZDv8+/1GTlGZKQ=';
+    worker-src 'self';
+    connect-src 'self' https://orbit-data.mikepreston.org https://celestrak.org;
+    img-src 'self' data:;
     style-src 'self';
     font-src 'self';
+    manifest-src 'self';
   " />
   <title>Orbit — Real-time 3D Satellite Tracker</title>
   <meta name="description" content="Real-time 3D visualization of satellite trajectories using CelesTrak OMM data and satellite.js SGP4 propagation." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='30' fill='%230b1220'/%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%2338bdf8' stroke-width='4'/%3E%3Cellipse cx='50' cy='50' rx='46' ry='18' fill='none' stroke='%2338bdf8' stroke-width='3' transform='rotate(-30 50 50)'/%3E%3Ccircle cx='87' cy='34' r='6' fill='%23facc15'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://orbit-data.mikepreston.org" />
+
+  <!--
+    Installability. The manifest covers Android/desktop; iOS ignores all of it
+    except the apple-touch-icon and the apple-mobile-web-app-* pair, which is
+    why both sets are here. `black-translucent` puts the status bar over the
+    scene, which is the point of a full-bleed globe — the safe-area padding in
+    main.css keeps the topbar out from under it.
+  -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Orbit" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
   <link rel="stylesheet" href="./styles/main.css" />
+  <!--
+    Vendored, not CDN-hosted: a service worker cannot reliably pre-cache opaque
+    cross-origin responses, so an offline launch used to come up to a blank
+    globe. Paths are relative so the app still works from a subpath (GitHub
+    Pages). Pinned versions live in scripts/vendor.mjs; `npm run vendor`
+    refetches them and rewrites vendor/VENDOR.json.
+  -->
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-      "satellite.js": "https://cdn.jsdelivr.net/npm/satellite.js@7.1.0/+esm",
-      "astronomy-engine": "https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/+esm"
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/addons/",
+      "satellite.js": "./vendor/satellite.js/satellite.js",
+      "astronomy-engine": "./vendor/astronomy-engine/astronomy.js"
     }
   }
   </script>

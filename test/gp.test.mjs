@@ -199,3 +199,54 @@ test('both remote failures fall back to stale browser data', async () => {
   assert.equal(second.source, 'browser-cache');
   assert.equal(second.stale, true, 'marked stale so the UI can flag it');
 });
+
+// Offline behaviour. Measured before this short-circuit existed: an installed
+// app launched with no signal spent 21.6 seconds on "Fetching orbital
+// elements…" — two doomed fetches timing out in series — before falling back to
+// exactly the cache it could have read immediately.
+// `globalThis.navigator` is a getter-only accessor from Node 21 on, so a plain
+// assignment throws. Swap the descriptor and put the original back afterwards.
+async function asOffline(fn) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { onLine: false },
+    configurable: true,
+  });
+  try {
+    await fn();
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original);
+    else delete globalThis.navigator;
+  }
+}
+
+test('offline, cached elements are served without attempting the network', async () => {
+  globalThis.localStorage.clear();
+
+  globalThis.fetch = okFetch();
+  await fetchGroup('active', { timeoutMs: 1000 });
+
+  let attempted = false;
+  globalThis.fetch = () => { attempted = true; return hangingFetch()(); };
+  await asOffline(async () => {
+    const offline = await fetchGroup('active', { force: true, timeoutMs: 30 });
+    assert.equal(attempted, false, 'must not wait on a fetch that cannot succeed');
+    assert.equal(offline.records.length, 1);
+    assert.equal(offline.source, 'browser-cache');
+    assert.equal(offline.stale, true);
+  });
+});
+
+test('offline with nothing cached fails fast and says why', async () => {
+  globalThis.localStorage.clear();
+  globalThis.fetch = hangingFetch();
+
+  await asOffline(async () => {
+    await assert.rejects(
+      fetchGroup('active', { timeoutMs: 30 }),
+      // The message reaches the user through the boot toast, so it has to read
+      // as a state of the world rather than as a fetch failure.
+      /offline, and no orbital elements have been cached yet/,
+    );
+  });
+});

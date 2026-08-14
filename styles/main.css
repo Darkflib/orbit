@@ -11,6 +11,17 @@
   --radius: 12px;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Display cutout insets. Zero in a browser tab and on anything rectangular;
+     non-zero once the app is installed and drawing under the status bar and
+     the home indicator, which is what index.html's `viewport-fit=cover` asks
+     for. Aliased here so the fallback is written once — `env()` with no
+     fallback resolves to nothing (not 0) in a `calc()` on older engines,
+     which poisons the whole expression. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 * { box-sizing: border-box; }
@@ -28,7 +39,14 @@ html, body {
   position: fixed;
   inset: 0;
   width: 100vw;
+  /* 100vh is the *large* viewport on mobile — the height with the browser
+     chrome retracted — so the canvas overflows by the toolbar's height while
+     it is showing, and the bottom of the globe sits under it. dvh tracks the
+     chrome as it comes and goes. The vh line stays as the fallback for engines
+     without dvh; the renderer sizes its own buffer from innerHeight either way
+     (scene.js), so the two agree. */
   height: 100vh;
+  height: 100dvh;
   display: block;
   cursor: grab;
   touch-action: none;
@@ -76,12 +94,16 @@ html, body {
   z-index: 20;
   width: 268px;
   max-height: calc(100vh - 132px);
+  max-height: calc(100dvh - 132px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-#panel-left { top: 64px; left: 16px; }
-#panel-right { top: 64px; right: 16px; }
+/* Landscape on a notched phone is wider than the 720px mobile breakpoint, so it
+   gets this desktop layout *and* a non-zero side inset — the one combination
+   where the horizontal insets matter. */
+#panel-left { top: calc(64px + var(--safe-top)); left: calc(16px + var(--safe-left)); }
+#panel-right { top: calc(64px + var(--safe-top)); right: calc(16px + var(--safe-right)); }
 
 .panel-header {
   display: flex;
@@ -253,11 +275,16 @@ html, body {
 #topbar {
   position: fixed;
   top: 0; left: 0; right: 0;
-  height: 48px;
+  /* Grows by the status-bar inset rather than being pushed down by it, so the
+     gradient still reaches the top of the screen and the controls sit below
+     the clock and notch instead of under them. */
+  height: calc(48px + var(--safe-top));
+  padding-top: var(--safe-top);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 18px;
+  padding-left: calc(18px + var(--safe-left));
+  padding-right: calc(18px + var(--safe-right));
   background: linear-gradient(to bottom, rgba(5,7,13,0.85), rgba(5,7,13,0));
   z-index: 15;
   pointer-events: none;
@@ -288,7 +315,7 @@ html, body {
 /* ---------- Time bar ---------- */
 #timebar {
   position: fixed;
-  bottom: 16px;
+  bottom: calc(16px + var(--safe-bottom));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -597,6 +624,11 @@ body.mode-sky #sky-section { display: block; }
     --timebar-h: 54px;
     --sheet-peek: 58px;  /* grabber + header: what a collapsed sheet occupies */
     --sheet-gap: 8px;
+    /* What the docked timebar actually occupies at the bottom of the screen:
+       its own height plus the home-indicator inset it pads itself out by. The
+       sheets stack against this rather than --timebar-h, or on a gesture-nav
+       phone the lowest sheet handle hides behind the indicator. */
+    --timebar-dock: calc(var(--timebar-h) + var(--safe-bottom));
   }
 
   /* Addressed by id, not `.panel`: the desktop rules `#panel-left { top: 64px }`
@@ -606,18 +638,18 @@ body.mode-sky #sky-section { display: block; }
   #panel-left,
   #panel-right {
     top: auto;
-    left: 8px;
-    right: 8px;
+    left: calc(8px + var(--safe-left));
+    right: calc(8px + var(--safe-right));
     width: auto;
     max-height: var(--sheet-max);
-    bottom: calc(var(--timebar-h) + var(--sheet-gap));
+    bottom: calc(var(--timebar-dock) + var(--sheet-gap));
     border-radius: 14px;
     transition: bottom 0.2s ease;
   }
   /* The selection sheet owns the bottom slot and the layers/sky sheet stacks
      above it, so both handles stay reachable while something is selected. */
   body.has-selection #panel-left {
-    bottom: calc(var(--timebar-h) + var(--sheet-peek) + var(--sheet-gap) * 2);
+    bottom: calc(var(--timebar-dock) + var(--sheet-peek) + var(--sheet-gap) * 2);
   }
   /* An expanded sheet would otherwise grow straight over the other panel's
      handle, so switching sheets would mean collapsing one before the other
@@ -627,7 +659,7 @@ body.mode-sky #sky-section { display: block; }
   #panel-left,
   #panel-right { --sheet-max: 62vh; }
   body.sheet-expanded #panel-left.collapsed {
-    bottom: calc(var(--sheet-max) + var(--timebar-h) + var(--sheet-gap) * 2);
+    bottom: calc(var(--sheet-max) + var(--timebar-dock) + var(--sheet-gap) * 2);
   }
   .panel.collapsed { z-index: 25; }   /* handles stay above an open sheet */
   .panel:not(.collapsed) { z-index: 24; }
@@ -646,7 +678,14 @@ body.mode-sky #sky-section { display: block; }
   .panel-header { cursor: pointer; padding: 8px 14px 12px; }
 
   /* --- Topbar: 616px of content in a 412px viewport before this --- */
-  #topbar { gap: 8px; padding: 0 10px; }
+  /* Longhand, not the `padding: 0 10px` shorthand this replaced: the shorthand
+     resets padding-top to 0, which silently undoes the status-bar inset — on
+     phones, the only devices that have one. */
+  #topbar {
+    gap: 8px;
+    padding-left: calc(10px + var(--safe-left));
+    padding-right: calc(10px + var(--safe-right));
+  }
   .brand { display: none; }          /* the mode tabs identify the app */
   .modeswitch button { padding: 5px 10px; font-size: 0.78rem; white-space: nowrap; }
   #stat-fps, #stat-source { display: none; }
@@ -662,8 +701,11 @@ body.mode-sky #sky-section { display: block; }
     width: 100%;
     max-width: none;
     transform: none;
-    height: var(--timebar-h);
-    padding: 0 10px;
+    /* Content keeps --timebar-h; the inset is added as padding underneath, so
+       the controls stay clear of the home indicator while the bar's background
+       still runs to the bottom edge of the screen. */
+    height: var(--timebar-dock);
+    padding: 0 calc(10px + var(--safe-right)) var(--safe-bottom) calc(10px + var(--safe-left));
     gap: 10px;
     border-radius: 0;
     border-left: none;
@@ -727,7 +769,14 @@ body.mode-sky #sky-section { display: block; }
   display: grid; place-items: center;
   background: rgba(3, 5, 10, 0.72);
   backdrop-filter: blur(4px);
-  padding: 64px 16px 16px;
+  /* The 64px top clears the topbar, which itself grows by the status-bar
+     inset — so this has to grow by the same amount or the catalogue slides
+     under the mode tabs. */
+  padding:
+    calc(64px + var(--safe-top))
+    calc(16px + var(--safe-right))
+    calc(16px + var(--safe-bottom))
+    calc(16px + var(--safe-left));
 }
 .cat-panel {
   width: min(980px, 100%); height: min(80vh, 760px);
@@ -785,7 +834,11 @@ body.mode-sky #sky-section { display: block; }
   position: fixed; inset: 0; z-index: 60;
   display: grid; place-items: center;
   background: rgba(3, 5, 10, 0.72); backdrop-filter: blur(4px);
-  padding: 16px;
+  padding:
+    calc(16px + var(--safe-top))
+    calc(16px + var(--safe-right))
+    calc(16px + var(--safe-bottom))
+    calc(16px + var(--safe-left));
 }
 .modal-panel {
   width: min(420px, 100%);

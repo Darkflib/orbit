@@ -3,6 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Static app](https://img.shields.io/badge/app-static-success.svg)
 ![No build step](https://img.shields.io/badge/build-none-success.svg)
+![Installable PWA](https://img.shields.io/badge/PWA-installable-7c3aed.svg)
 ![Data: CelesTrak](https://img.shields.io/badge/data-CelesTrak-38bdf8.svg)
 
 A frontend-only, real-time 3D visualization of the world's active satellites.
@@ -24,6 +25,12 @@ coverage footprint.
 
 ## Highlights
 
+- **Installable, and works offline.** Add it to your home screen and it runs in
+  its own window with no browser chrome, launching with no network at all —
+  interface, SGP4 code and Earth textures are all cached on the device. Only
+  fresh orbital elements need a connection; without one it propagates from the
+  last catalogue it cached and tells you it is doing so. See
+  [Installing it](#installing-it).
 - **Static and resilient.** The app reads atomically published files from
   `orbit-data.mikepreston.org`, then caches elements compactly in
   `localStorage`. If the mirror is unavailable it falls back to CelesTrak
@@ -95,6 +102,34 @@ npx serve .
 
 Then open the printed URL. The first load fetches GP data from the Orbit Data
 mirror (normally a few seconds); subsequent loads use the 2-hour browser cache.
+
+There is still no build step: `vendor/` (three.js, satellite.js,
+astronomy-engine and the Earth textures) is committed, so a fresh clone runs
+with nothing but `npm start`. Maintainers bumping a pinned version run
+`npm run vendor`, which refetches the tree and rewrites `vendor/VENDOR.json`;
+`npm test` re-hashes the committed files against it.
+
+## Installing it
+
+Orbit is a progressive web app: **Add to Home Screen** on iOS or **Install** on
+Android/desktop gives it its own icon and window, with no browser chrome. Once
+installed it launches and runs with no network — the interface, the propagation
+code and the Earth textures are all served from the device.
+
+What offline does *not* give you is fresh orbital elements. Launched without a
+connection, Orbit propagates from the last catalogue it cached and says so;
+elements more than a few days old drift noticeably, so treat an offline session
+as approximate. Open it once with a connection and it refreshes.
+
+Two things worth knowing:
+
+- Installing also makes the cached data more durable on iOS. Safari clears
+  script-writable storage after seven days without a visit, but exempts
+  installed web apps — so an installed Orbit keeps its catalogue where a
+  browser tab would quietly lose it.
+- If a release ever leaves the app in a bad state, loading it once with
+  `?sw=off` clears every cache, unregisters the service worker and serves the
+  next load straight from the network.
 
 ## How it works
 
@@ -185,7 +220,14 @@ bright enough to see.
 - Sun / Moon / planet ephemerides and star coordinate transforms:
   [Astronomy Engine](https://github.com/cosinekitty/astronomy).
 - Rendering: [three.js](https://threejs.org/). Earth textures from the three.js
-  examples.
+  examples (`examples/textures/planets`, three.js r160, MIT).
+
+Those four libraries and textures are vendored under `vendor/` rather than
+loaded from a CDN, with their upstream URLs, versions and digests recorded in
+`vendor/VENDOR.json`. Vendoring is what makes an offline launch possible — a
+service worker cannot reliably pre-cache opaque cross-origin responses — and it
+lets the CSP drop every external origin from `script-src`, `worker-src` and
+`img-src`, so nothing third-party can execute in the app's origin.
 
 Visual references: [Track The Sky](https://trackthesky.com/) and
 [satellitemap.space](https://satellitemap.space/).
