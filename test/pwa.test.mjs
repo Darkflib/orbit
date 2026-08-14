@@ -12,7 +12,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { inflateSync } from 'node:zlib';
 import { SIZES, renderIcon } from '../scripts/make-icons.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,8 +26,14 @@ const sw = await read('sw.js');
 // The SHELL array is a plain literal, so reading it out of the source is both
 // simpler and more honest than importing sw.js (which references `self` and a
 // pile of service-worker globals Node does not have).
-const SHELL = [...sw.match(/const SHELL = \[([\s\S]*?)\];/)[1]
-  .matchAll(/'([^']+)'/g)].map((m) => m[1]);
+//
+// Guarded, because this runs at import time: if the literal is ever reformatted
+// the match returns null and `[1]` throws a TypeError, which aborts the whole
+// file — every test in it vanishes rather than one failing with a reason.
+const shellLiteral = sw.match(/const SHELL = \[([\s\S]*?)\];/);
+assert.ok(shellLiteral, 'could not find the SHELL array literal in sw.js');
+const SHELL = [...shellLiteral[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+assert.ok(SHELL.length > 0, 'parsed an empty SHELL list out of sw.js');
 
 test('every manifest icon exists and is declared at its real size', async () => {
   assert.ok(manifest.icons.length >= 2, 'need at least a 192 and a 512');
@@ -73,15 +79,45 @@ test('the viewport opts into the display cutout', () => {
   assert.match(html, /name="viewport"[^>]*viewport-fit=cover/);
 });
 
+// Pull the dimensions and the decompressed pixels back out of a PNG.
+//
+// Comparing the raw file bytes would be simpler and wrong: the pixels are
+// deflated, and zlib's output for identical input is not guaranteed stable
+// across Node or zlib versions. That would fail this test on a routine runtime
+// upgrade while the rendered image was byte-identical — a false alarm about
+// stale icons that sends someone hunting through the wrong file.
+function decodePng(buf) {
+  const idat = [];
+  let width = 0;
+  let height = 0;
+  let offset = 8; // past the 8-byte signature
+  while (offset < buf.length) {
+    const length = buf.readUInt32BE(offset);
+    const type = buf.toString('ascii', offset + 4, offset + 8);
+    const data = buf.subarray(offset + 8, offset + 8 + length);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    } else if (type === 'IEND') break;
+    offset += 12 + length; // length + type + data + crc
+  }
+  return { width, height, pixels: inflateSync(Buffer.concat(idat)) };
+}
+
 test('the committed icons are what make-icons.mjs renders', async () => {
   // Regenerating is cheap, and this is the only thing standing between the
   // committed binaries and the geometry that is supposed to define them.
   for (const { file, size, maskable } of SIZES) {
-    const expected = createHash('sha256').update(renderIcon(size, maskable)).digest('hex');
-    const actual = createHash('sha256')
-      .update(await readFile(join(REPO_ROOT, 'icons', file)))
-      .digest('hex');
-    assert.equal(actual, expected, `${file} is stale — re-run \`npm run icons\``);
+    const expected = decodePng(renderIcon(size, maskable));
+    const actual = decodePng(await readFile(join(REPO_ROOT, 'icons', file)));
+    assert.equal(actual.width, expected.width, `${file} is the wrong width`);
+    assert.equal(actual.height, expected.height, `${file} is the wrong height`);
+    assert.ok(
+      actual.pixels.equals(expected.pixels),
+      `${file} does not match the current mark — re-run \`npm run icons\``,
+    );
   }
 });
 

@@ -38,25 +38,53 @@ test('the CSP sha256 allow-list matches the inline import map', () => {
   );
 });
 
-test('nothing executable may load from a third-party origin', () => {
-  // The libraries and textures are vendored, so any external host reappearing
-  // in one of these directives means something slipped back onto a CDN — which
-  // would also break the service worker's pre-cache, since opaque cross-origin
-  // responses cannot be relied on offline.
-  for (const directive of ['script-src', 'worker-src', 'img-src', 'style-src']) {
-    const external = (directives[directive] ?? []).filter((s) => s.startsWith('http'));
+// The whole policy, asserted as an allow-list rather than by pattern.
+//
+// An earlier version of this test only rejected sources matching
+// `startsWith('http')`, which is a weaker check than it looks: CSP host-sources
+// need no scheme at all (`cdn.example.com` is valid and would have passed),
+// schemes match case-insensitively, and `//evil.example` is a valid source too.
+// Enumerating what is permitted has no such gaps — anything new has to be added
+// here deliberately, which is the review moment worth having.
+const EXPECTED = {
+  'default-src': ["'self'"],
+  'base-uri': ["'self'"],
+  'object-src': ["'none'"],
+  'worker-src': ["'self'"],
+  'img-src': ["'self'", 'data:'],
+  'style-src': ["'self'"],
+  'font-src': ["'self'"],
+  'manifest-src': ["'self'"],
+  'connect-src': ["'self'", 'https://orbit-data.mikepreston.org', 'https://celestrak.org'],
+};
+
+test('every directive allows exactly what it is meant to and nothing more', () => {
+  for (const [directive, allowed] of Object.entries(EXPECTED)) {
     assert.deepEqual(
-      external,
-      [],
-      `${directive} must not allow external origins, found: ${external.join(', ')}`,
+      directives[directive],
+      allowed,
+      `${directive} has drifted from its allow-list`,
     );
   }
 });
 
-test('connect-src allows exactly the two data origins', () => {
+test('script-src permits only this origin and the import-map hash', () => {
+  // Handled separately because the hash changes whenever the import map does,
+  // so it cannot be a literal in the table above.
+  const sources = directives['script-src'] ?? [];
+  const hashes = sources.filter((s) => /^'sha(256|384|512)-/.test(s));
+  assert.equal(hashes.length, 1, 'expected exactly one inline-script hash');
   assert.deepEqual(
-    directives['connect-src'],
-    ["'self'", 'https://orbit-data.mikepreston.org', 'https://celestrak.org'],
-    'connect-src is the mirror plus the CelesTrak fallback, and nothing else',
+    sources.filter((s) => !hashes.includes(s)),
+    ["'self'"],
+    'script-src must be this origin plus the import-map hash, nothing else',
   );
+});
+
+test('the policy names no directive we have not accounted for', () => {
+  // A directive added without a matching expectation would otherwise sit here
+  // completely unchecked.
+  const known = new Set([...Object.keys(EXPECTED), 'script-src']);
+  const unexpected = Object.keys(directives).filter((d) => !known.has(d));
+  assert.deepEqual(unexpected, [], 'add these to the CSP test: ' + unexpected.join(', '));
 });

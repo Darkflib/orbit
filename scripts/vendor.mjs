@@ -14,8 +14,9 @@
 // moves. That is the whole reason the files are committed rather than fetched
 // at deploy time.
 //
-//   node scripts/vendor.mjs           # refetch everything, rewrite VENDOR.json
-//   node scripts/vendor.mjs --check   # verify vendor/ matches VENDOR.json
+//   node scripts/vendor.mjs                # refetch, verifying against VENDOR.json
+//   node scripts/vendor.mjs --accept-new   # ...and trust bytes for changed pins
+//   node scripts/vendor.mjs --check        # verify vendor/ matches VENDOR.json
 //
 // VENDOR.json records the source URL, version and sha256 of every file.
 // test/vendor.test.mjs re-hashes the tree against it, so a truncated download
@@ -24,7 +25,7 @@
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, '..');
@@ -108,11 +109,65 @@ async function download(url) {
   return buf;
 }
 
-async function vendorAll() {
-  await rm(VENDOR_DIR, { recursive: true, force: true });
-  const files = {};
+async function vendorAll({ acceptNew = false } = {}) {
+  // Read the committed lockfile *before* the tree is cleared. This is what
+  // makes re-vendoring a verification rather than an act of faith: for a pin
+  // that has not moved, the bytes must hash to what is already recorded.
+  //
+  // Without it the digest is derived from the very download it is supposed to
+  // vouch for, so an altered or truncated response would simply be recorded as
+  // the new truth and would then pass `--check` and the test suite for ever
+  // after. The recorded hash would only ever catch later local edits.
+  let previous = null;
+  try {
+    previous = await readManifest();
+  } catch {
+    // No lockfile yet — the first ever vendoring run.
+  }
+
+  const unverifiable = [];
+  const downloads = [];
   for (const asset of ASSETS) {
     const buf = await download(asset.url);
+    const digest = sha256(buf);
+    const known = previous?.files?.[asset.dest];
+    // A recorded digest is only authoritative for the same pinned version;
+    // a version bump is expected to change the bytes.
+    const expected = known && known.version === asset.version ? known.sha256 : null;
+
+    if (expected && expected !== digest) {
+      throw new Error(
+        `integrity check failed for ${asset.dest}\n`
+        + `  pinned:   ${asset.pkg}@${asset.version} (unchanged)\n`
+        + `  expected: ${expected}\n`
+        + `  received: ${digest}\n`
+        + `  from:     ${asset.url}\n`
+        + 'The pin has not moved, so these bytes should be identical. Nothing has\n'
+        + 'been written. Investigate before re-running: either upstream republished\n'
+        + 'the same version, or the response was tampered with in transit.',
+      );
+    }
+    if (!expected) unverifiable.push(`${asset.dest} (${asset.pkg}@${asset.version})`);
+    downloads.push({ asset, buf, digest });
+  }
+
+  // Adopting bytes with no digest to check them against is a real trust
+  // decision — a pin bump, or a first run — so it is made explicitly rather
+  // than as a side effect of running the script.
+  if (unverifiable.length && !acceptNew) {
+    throw new Error(
+      `no recorded digest to verify against for:\n  ${unverifiable.join('\n  ')}\n\n`
+      + 'This is expected when a pin has changed or on a first run. Nothing has been\n'
+      + 'written. Re-run with --accept-new to trust and record these bytes, and treat\n'
+      + 'the resulting VENDOR.json diff as part of the review.',
+    );
+  }
+
+  // Only now, with every download either verified or explicitly accepted, is
+  // anything written to disk.
+  await rm(VENDOR_DIR, { recursive: true, force: true });
+  const files = {};
+  for (const { asset, buf, digest } of downloads) {
     const out = join(VENDOR_DIR, asset.dest);
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, buf);
@@ -121,7 +176,7 @@ async function vendorAll() {
       package: asset.pkg,
       version: asset.version,
       bytes: buf.length,
-      sha256: sha256(buf),
+      sha256: digest,
     };
     console.log(`  ${asset.dest}  ${(buf.length / 1024).toFixed(1)} KiB`);
   }
@@ -155,7 +210,10 @@ async function check() {
   console.log(`vendor/ matches VENDOR.json (${Object.keys(files).length} files)`);
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL rather than a `file://` template: the concatenated form is
+// wrong for paths containing spaces or non-ASCII characters, and for Windows
+// drive letters — the guard silently fails and the script does nothing.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv.includes('--check')) await check();
-  else await vendorAll();
+  else await vendorAll({ acceptNew: process.argv.includes('--accept-new') });
 }

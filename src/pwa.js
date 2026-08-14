@@ -21,7 +21,21 @@ let reloading = false;
 
 async function nukeServiceWorkers() {
   if (!('serviceWorker' in navigator)) return;
-  const regs = await navigator.serviceWorker.getRegistrations();
+
+  // Only ever Orbit's own registration. `getRegistrations()` returns every
+  // registration for the *origin*, and on GitHub Pages the origin is shared by
+  // every project a user publishes — `darkflib.github.io/orbit/`,
+  // `.../something-else/`. Unregistering all of them would take another
+  // project's offline support down as a side effect of recovering this one.
+  // Resolved against the document, not this module: `register('./sw.js')` below
+  // is document-relative, so resolving against import.meta.url would look for
+  // /src/sw.js and match nothing — leaving the escape hatch quietly inert.
+  const ourScript = new URL('./sw.js', document.baseURI).href;
+  const regs = (await navigator.serviceWorker.getRegistrations()).filter((reg) => {
+    const worker = reg.active ?? reg.waiting ?? reg.installing;
+    return worker?.scriptURL === ourScript;
+  });
+
   // Ask the active worker to clean up its own caches first — it owns them and
   // knows their names. Unregistering alone leaves the Cache Storage behind.
   for (const reg of regs) {
@@ -74,8 +88,14 @@ export async function registerServiceWorker({ onUpdateReady } = {}) {
   // an uncaught error at boot.
   if (!reg) return null;
 
+  // Whether this page was already under a worker when it loaded. On a first
+  // ever visit it is not, and the worker's `clients.claim()` then fires
+  // `controllerchange` for the initial hand-off — which is not an update, and
+  // reloading on it bounces every new visitor once for no reason.
+  const hadController = Boolean(navigator.serviceWorker.controller);
+
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloading) return;
+    if (!hadController || reloading) return;
     reloading = true;
     location.reload();
   });

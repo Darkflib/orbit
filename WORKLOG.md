@@ -73,9 +73,56 @@ Four defects, none of which a unit test or a diff would have shown:
 4. **`navigator` is only a global from Node 21, and CI runs 20.** The check
    above passed locally and would have been a `ReferenceError` in CI.
 
-`scripts/dev/offline.mjs` is the new driver, and the only thing that actually
-proves the claim: install the worker, cut the network, reload, assert the shell
-boots, the vendored module graph resolves and a WebGL context comes up. 6/6.
+`scripts/dev/offline.mjs` is the new driver, and the only thing that can prove
+the claim — though the first version of it proved nothing at all. See the
+follow-up below.
+
+### Follow-up, same day: the offline test was not testing offline
+
+Review (CodeQL, Codex, CodeRabbit) landed four real defects on top of the four
+above. The worst was one this worklog had already claimed was verified.
+
+**The pre-cache was written to one cache and read from another.** `install`
+fills `SHELL_CACHE`; the asset path served from `ASSET_CACHE`, which on a first
+offline launch is empty, because the page that populated the shell was not yet
+controlled. The navigation would fall back to the cached HTML and then every
+module, style and texture behind it would fail. Flagged independently by Codex
+and CodeRabbit; the fix is one lookup, and the interesting part is why it
+survived a driver written specifically to catch it:
+
+- **`context.setOffline(true)` does not apply to a service worker.** The
+  worker's own `fetch()` kept reaching the server throughout, so the run was
+  fully online and the pre-cache was never read.
+- **Chromium's HTTP cache covered the rest.** Even with the page offline, the
+  modules and textures were served from disk.
+- **The assertions could not fail.** A `<canvas>` exists whether or not any
+  script ran, and `getContext()` will happily create a context on a blank one.
+  `canvas.width > 0` passes at the default 300x150 — which is exactly what the
+  broken build produced.
+
+The driver now starts and stops its own server, so nothing but Cache Storage
+can serve the app, disables the HTTP cache as well, and asserts on UI that only
+`main.js` builds. Run against the unfixed worker it fails 4/7 with a 300x150
+buffer; fixed, 7/7. The lesson is not "test offline" — the file already claimed
+to. It is that a test which cannot fail is worse than no test, because it is
+quoted in a worklog as evidence.
+
+**Three more, all real.** `getRegistrations()` returns every registration for
+the *origin*, and GitHub Pages gives every project on an account the same one —
+so `?sw=off` would have unregistered other projects' workers as a side effect
+of recovering this one; it is now filtered to Orbit's own `sw.js`.
+`navigator.wakeLock.request()` can resolve after `disable()` has run, storing a
+lock nothing will ever release and leaving the screen awake for good; requests
+are now generation-guarded. And `vendor.mjs` hashed each download *after*
+fetching it and recorded that as the expected digest, so a tampered response
+would have been written down as the new truth and passed `--check` forever
+after — it now verifies against the committed digest whenever the pin has not
+moved, refuses to write on a mismatch, and requires `--accept-new` to adopt
+bytes it cannot check.
+
+CodeQL's remaining two alerts on `vendor.mjs` are the network-to-file pattern
+itself, which is what a vendoring script *is*. The integrity work above is the
+substantive answer; the alerts need a human decision to dismiss.
 
 ### The rest
 `dvh` alongside `vh` (100vh is the *large* viewport on mobile, so the globe sat

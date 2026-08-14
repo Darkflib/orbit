@@ -107,6 +107,15 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
+  // Both messages below are privileged: one swaps the version the app is
+  // running, the other destroys every cache and unregisters the worker. In
+  // practice a cross-origin page cannot reach this registration at all —
+  // `navigator.serviceWorker` is same-origin — so this check is defence in
+  // depth rather than a hole being closed. It is cheap, and inheriting a
+  // security property from the platform without stating it is how it gets
+  // quietly lost later.
+  if (event.origin !== self.location.origin) return;
+
   const type = event.data && event.data.type;
   if (type === 'SKIP_WAITING') {
     // The page has told the user an update is ready and they accepted it, so
@@ -157,7 +166,16 @@ async function networkFirst(request, cacheName, timeoutMs) {
 // worst, and it converges without any version bump.
 async function staleWhileRevalidate(request, cacheName) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
+  // Two caches, checked in this order, and the order is not arbitrary.
+  //
+  // Everything the app needs to boot is written to SHELL_CACHE at install time,
+  // by a worker whose page was not yet controlled — so on a first offline
+  // launch ASSET_CACHE is still empty and consulting it alone finds nothing:
+  // the navigation falls back to the cached HTML and then every module, style
+  // and texture behind it fails. ASSET_CACHE comes first because it holds the
+  // revalidated copy, which is the fresher of the two whenever both exist.
+  const cached = (await cache.match(request))
+    ?? (await caches.match(request, { cacheName: SHELL_CACHE }));
   const network = fetch(request)
     .then((res) => {
       if (isCacheable(res)) cache.put(request, res.clone());

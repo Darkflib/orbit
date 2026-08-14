@@ -8,7 +8,7 @@
 // iOS ignores anything that is not an <link rel="apple-touch-icon"> PNG. Rather
 // than commit four binaries with no way to regenerate them, the mark is defined
 // once here as geometry and rasterised. Rerun after changing it and commit the
-// output; test/icons.test.mjs checks the committed PNGs are the ones this
+// output; test/pwa.test.mjs checks the committed PNGs are the ones this
 // script produces.
 //
 // Everything is hand-rolled — supersampled coverage for the shapes, zlib for
@@ -18,7 +18,7 @@
 import { deflateSync } from 'node:zlib';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -188,7 +188,9 @@ export async function readIconDigests() {
 
 export { SIZES };
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL rather than a `file://` template, which is wrong for paths with
+// spaces or non-ASCII characters and for Windows drive letters.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await mkdir(ICON_DIR, { recursive: true });
   for (const { file, size, maskable } of SIZES) {
     const png = renderIcon(size, maskable);

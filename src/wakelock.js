@@ -23,21 +23,47 @@ export function createWakeLock() {
   // backgrounded and the OS drops the lock underneath us.
   let wanted = false;
 
+  // Bumped by every drop(). A request that was already in flight when the state
+  // changed compares the generation it started in against this and, if it has
+  // moved, releases what it was handed instead of storing it.
+  //
+  // The race is real and easy to hit on a phone: tapping pause (or backgrounding
+  // the app) while `navigator.wakeLock.request` is still pending resolves it
+  // *after* drop() has run, so the lock gets stored when nothing wants it and
+  // the screen then stays awake indefinitely — with `disable()` already called,
+  // nothing is left to release it.
+  let generation = 0;
+  let pending = false;
+
   async function acquire() {
-    if (!supported || !wanted || sentinel || document.visibilityState !== 'visible') return;
+    if (!supported || !wanted || sentinel || pending) return;
+    if (document.visibilityState !== 'visible') return;
+    const mine = generation;
+    pending = true;
     try {
-      sentinel = await navigator.wakeLock.request('screen');
+      const lock = await navigator.wakeLock.request('screen');
+      if (mine !== generation || !wanted || document.visibilityState !== 'visible') {
+        // The world moved while we were waiting. Hand it straight back.
+        await lock.release().catch(() => {});
+        return;
+      }
+      sentinel = lock;
       // The OS can drop the lock for reasons of its own (battery saver, a call
       // coming in). Clearing the handle means the next visibilitychange tries
-      // again rather than believing it still holds one.
-      sentinel.addEventListener('release', () => { sentinel = null; });
+      // again rather than believing it still holds one — but only if this is
+      // still the current lock, so a stale release cannot blank a newer one.
+      lock.addEventListener('release', () => {
+        if (sentinel === lock) sentinel = null;
+      });
     } catch {
       // No gesture yet, policy refusal, or unsupported in this context.
-      sentinel = null;
+    } finally {
+      pending = false;
     }
   }
 
   async function drop() {
+    generation++;
     const held = sentinel;
     sentinel = null;
     try {
