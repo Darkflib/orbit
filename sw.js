@@ -114,10 +114,14 @@ self.addEventListener('message', (event) => {
   // depth rather than a hole being closed. It is cheap, and inheriting a
   // security property from the platform without stating it is how it gets
   // quietly lost later.
-  // `location.origin`, not `self.location.origin`: identical at runtime (a
-  // worker's `location` *is* `self.location`), but CodeQL's missing-origin-check
-  // query kept flagging the `self.`-qualified form, apparently not modelling it
-  // as the origin inside a ServiceWorkerGlobalScope.
+  // CodeQL's missing-origin-check query flags this handler whichever way the
+  // comparison is written — `self.location.origin` and the unqualified
+  // `location.origin` were both tried, and the alert is unchanged. The query
+  // appears to want a check against a specific expected origin rather than
+  // against the worker's own, which is not a thing that exists here: a service
+  // worker is reachable only from its own origin in the first place. The check
+  // stays because it is correct and free; the alert is a standing false
+  // positive to be dismissed rather than coded around.
   if (event.origin !== location.origin) return;
 
   const type = event.data && event.data.type;
