@@ -1,5 +1,70 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-15 — Removing the browser's direct CelesTrak fallback
+
+CelesTrak (Dr T.S. Kelso) firewalled the data-mirror server's IP for excessive
+bandwidth. The complaint had two parts, and both were fair: we requested the
+bandwidth-heavy JSON format, and we requested the `active` GROUP *alongside*
+eleven GROUPs that are subsets of `active` — so every satellite in a
+constellation layer came down the wire twice. The mirror (a separate repo) was
+fixed first: it now fetches `active` once per cycle and derives the subsets
+locally.
+
+The frontend still had the identical anti-pattern, only worse, because it ran
+from every visitor's browser. `fetchElements` tried the mirror and then fell
+back to `celestrak.org/NORAD/elements/gp.php?GROUP=…&FORMAT=JSON` for each of
+the twelve GROUPs `LAYERS` names — `active` and eleven of its own subsets —
+plus `SPECIAL=DECAYING`, on a two-hour refresh. A
+mirror hiccup during a deploy is precisely the moment every open tab fails over
+at once, so the failure mode was a synchronised stampede of duplicated JSON.
+
+### Why it could not be fixed the way the server was
+The server fix works because there is one process, with one bandwidth budget,
+that can be taught to deduplicate and back off. A browser fleet has none of
+that. It cannot share a ledger, cannot be rate-limited from here, and cannot
+honour a 403 "stop" — each tab just sees one failed request and keeps its own
+two-hour schedule. There is no version of the fallback that is polite, so it is
+gone rather than tuned.
+
+What remains covers the outage it was added for, and none of it touches
+CelesTrak: the mirror, then the stale `localStorage` copy (served at any age and
+flagged `stale` in the UI), then the catalogue bundled with the app.
+
+### What landed
+- **`src/gp.js`** — `fetchElements` is a single mirror attempt instead of an
+  `attempts` list; the `upstreamUrl` parameter is gone from it and from both
+  callers (`fetchGroup`, `fetchDecaying`). Degrade-to-stale-cache is unchanged.
+  The total-failure message no longer joins per-source failures — with one
+  source it reads `GP data unavailable (orbit-data: HTTP 503)`.
+- **`src/constants.js`** — `CELESTRAK_URL`, `CELESTRAK_SPECIAL_URL` and the now
+  unreferenced `GP_FETCH_TIMEOUT_MS` removed. The note above `ORBIT_DATA_ORIGIN`
+  records the fair-use incident and says plainly not to re-add the fallback;
+  without that, the next person to see a mirror outage rebuilds it.
+- **`index.html`** — `celestrak.org` dropped from `connect-src`, so a
+  reintroduced fetch is blocked by the browser rather than shipped. The info
+  panel's CelesTrak satcat link (`src/main.js`) is a *navigation*, which
+  `connect-src` does not govern, and keeps working.
+- **`scripts/dev/harness.mjs`** — `stubElementSources` serves the mirror only,
+  and routes `celestrak.org` to an aborted request so a regression fails the
+  harness loudly instead of being handed stub data.
+- **Docs** — README highlight and module list, `SECURITY.md`'s data-and-privacy
+  paragraph (which still claimed the browser fetches CelesTrak directly).
+
+### Superseding an earlier entry
+The 2026-08-10 hand-off below says "`orbit-data.mikepreston.org` is primary,
+CelesTrak is the fallback, the bundled snapshot is the last resort". The middle
+term no longer exists; the sentence otherwise stands.
+
+### Verified
+- Suite **118 tests**, all passing (was 115). `test/gp.test.mjs` asserts the new
+  contract rather than losing the coverage: a healthy fetch touches only the
+  mirror; a mirror error, a malformed payload and a timeout each fail without a
+  second request; a group fetch and a decaying fetch never leave the mirror
+  origin; and a mirror failure with a cache present still degrades to stale
+  browser data. `test/csp.test.mjs` asserts no directive permits `celestrak.org`
+  *and* that the satcat link survives (no `navigate-to` directive).
+- No request was made to celestrak.org at any point in this work.
+
 ## 2026-08-12 — "USA 224 is missing": objects with no element set
 
 A user searched for USA 224 (NORAD 37348, COSPAR 2011-002A) and reported it as a
