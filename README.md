@@ -30,7 +30,8 @@ coverage footprint.
   if it is unavailable the app serves the last browser-cached copy, and then the
   catalogue bundled with the app. The browser never fetches CelesTrak directly —
   a fleet of tabs failing over at once cannot be rate-limited or told to stop,
-  and doing so breaches CelesTrak's fair-use policy. Only the mirror talks
+  and doing so breaches [CelesTrak's usage
+  policy](https://celestrak.org/usage-policy.php). Only the mirror talks
   upstream, once per publication cycle.
 - **OMM, not legacy TLE.** CelesTrak exhausted 5-digit catalog numbers in 2026;
   new objects (6-digit IDs) are no longer published as TLEs. Orbit uses the OMM

@@ -70,12 +70,16 @@ export const GP_CACHE_PREFIX = 'orbit.gp.';
 // orbital data from — there is no direct-to-CelesTrak fallback, and one must not
 // be re-added.
 //
-// CelesTrak (Dr T.S. Kelso) firewalled this project's mirror host for breaching
-// their fair-use policy: it requested the bandwidth-heavy JSON format, and
-// asked for the `active` GROUP *alongside* eleven groups that are subsets of
-// `active`, which sent the same elements down the wire twice. The mirror now
-// fetches `active` once and derives the subsets locally. See the 2026-08-15
-// worklog entry.
+// CelesTrak (Dr T.S. Kelso) firewalled this project's mirror host on 2026-08-10
+// for breaching their 100 MB/day limit: it requested the bandwidth-heavy JSON
+// format, which is three times the size of CSV, and asked for the `active`
+// GROUP *alongside* eleven groups that are subsets of `active`, which sent the
+// same elements down the wire twice. The mirror now fetches `active` once, in
+// CSV, and derives the subsets locally. The policy is at
+// https://celestrak.org/usage-policy.php and the daily limit is documented at
+// https://celestrak.org/NORAD/documentation/gp-data-formats.php#update — read
+// both before adding any request to an upstream provider. See also the
+// 2026-08-15 worklog entry.
 //
 // The frontend had the identical anti-pattern, from every visitor's browser: on
 // any mirror hiccup — a deploy, a DNS blip — every open tab would fail over to
