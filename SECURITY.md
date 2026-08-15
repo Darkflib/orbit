@@ -4,8 +4,8 @@
 
 Orbit is a static, frontend-only application: it has no backend, no accounts,
 and no server-side data. The most likely security-relevant issues are things
-like a dependency (three.js / satellite.js) advisory, or a way for fetched TLE
-text to be mishandled in the DOM.
+like a dependency (three.js / satellite.js) advisory, or a way for fetched
+orbital-element data to be mishandled in the DOM.
 
 If you believe you've found a security issue, please **do not open a public
 issue**. Instead, email **darkflib@gmail.com** with:

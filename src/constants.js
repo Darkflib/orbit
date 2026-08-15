@@ -87,8 +87,11 @@ export const GP_CACHE_PREFIX = 'orbit.gp.';
 // fleet cannot be rate-limited from here, cannot share a bandwidth ledger and
 // cannot be told to stop when a 403 arrives, so the fallback was not fixable the
 // way the server was; it was removed instead. A mirror outage now degrades to
-// the stale localStorage copy in gp.js, and then to the catalogue bundled with
-// the app — both offline, both costing CelesTrak nothing.
+// the stale localStorage copy in gp.js, served at any age and flagged in the
+// UI — offline, and costing CelesTrak nothing. A first visit during an outage
+// has no cache and surfaces the GP error instead: the snapshot bundled in
+// data/ is catalogue metadata (names, magnitudes, object types), not element
+// sets, so it cannot stand in for GP data however much one might want it to.
 export const ORBIT_DATA_ORIGIN = 'https://orbit-data.mikepreston.org';
 export const ORBIT_DATA_GP_URL = (dataset) =>
   `${ORBIT_DATA_ORIGIN}/v1/gp/${dataset}.json`;

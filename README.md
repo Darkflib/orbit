@@ -27,8 +27,10 @@ coverage footprint.
 - **Static and resilient.** The app reads atomically published files from
   `orbit-data.mikepreston.org`, then caches elements compactly in
   `localStorage`. That mirror is the only origin it fetches orbital data from:
-  if it is unavailable the app serves the last browser-cached copy, and then the
-  catalogue bundled with the app. The browser never fetches CelesTrak directly —
+  if it is unavailable the app serves the last browser-cached copy at any age,
+  flagged as stale in the UI. A first visit during an outage has no cache to
+  fall back on and reports the error — the bundled snapshot carries catalogue
+  metadata, not element sets. The browser never fetches CelesTrak directly —
   a fleet of tabs failing over at once cannot be rate-limited or told to stop,
   and doing so breaches [CelesTrak's usage
   policy](https://celestrak.org/usage-policy.php). Only the mirror talks

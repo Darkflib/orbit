@@ -27,8 +27,15 @@ two-hour schedule. There is no version of the fallback that is polite, so it is
 gone rather than tuned.
 
 What remains covers the outage it was added for, and none of it touches
-CelesTrak: the mirror, then the stale `localStorage` copy (served at any age and
-flagged `stale` in the UI), then the catalogue bundled with the app.
+CelesTrak: the mirror, then the stale `localStorage` copy, served at any age and
+flagged `stale` in the UI.
+
+Worth being precise about the limit of that, because the first draft of this
+entry was not. There is no third rung. A visitor arriving during a mirror
+outage with an empty cache gets the GP error and no satellites — the snapshot
+bundled in `data/` is catalogue metadata and sky files, which `src/data.js`
+serves for enrichment and search, and it holds no element sets. Review caught
+the overclaim in three places before it shipped.
 
 ### What landed
 - **`src/gp.js`** — `fetchElements` is a single mirror attempt instead of an

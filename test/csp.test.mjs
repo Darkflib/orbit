@@ -62,10 +62,47 @@ test('the CSP permits the CDN-backed module worker and its source maps', () => {
 // to them is what got the project's mirror host firewalled. Code can regress;
 // with the origin absent from connect-src, a reintroduced fetch is blocked by
 // the browser rather than shipped.
+// Matched on the parsed host rather than by searching the source text for
+// 'celestrak.org'. A substring test answers the wrong question — it is true of
+// `https://celestrak.org.example.com`, which is somebody else's host entirely,
+// and false of nothing we care about. Parsing also means the wildcard form
+// `*.celestrak.org` is caught by the suffix check below rather than by luck.
+function hostOf(source) {
+  // Keywords ('self', 'none'), hashes and nonces are quoted; scheme sources
+  // like `data:` carry no host. None of them can name an origin.
+  if (source.startsWith("'") || /^[a-z][a-z0-9+.-]*:$/i.test(source)) return null;
+  const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(source) ? source : `https://${source}`;
+  try {
+    return new URL(absolute).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+// A guard that silently stops guarding is worse than no guard. `hostOf`
+// returning null for everything would make the test below pass against a CSP
+// that allowed CelesTrak outright, so pin the forms it has to recognise —
+// and the near-miss host it must not confuse for one.
+test('the celestrak.org host check recognises the forms it has to catch', () => {
+  assert.equal(hostOf('https://celestrak.org'), 'celestrak.org');
+  assert.equal(hostOf('celestrak.org'), 'celestrak.org');
+  assert.equal(hostOf('https://CelesTrak.org'), 'celestrak.org');
+  assert.equal(hostOf('*.celestrak.org'), '*.celestrak.org');
+  assert.equal(hostOf('https://celestrak.org.example.com'), 'celestrak.org.example.com');
+  assert.equal(hostOf("'self'"), null);
+  assert.equal(hostOf('data:'), null);
+  assert.equal(hostOf('https://orbit-data.mikepreston.org'), 'orbit-data.mikepreston.org');
+});
+
 test('no directive permits fetching from celestrak.org', () => {
   for (const [name, sources] of Object.entries(directives)) {
-    assert.ok(
-      !sources.some((source) => source.includes('celestrak.org')),
+    const offending = sources.filter((source) => {
+      const host = hostOf(source);
+      return host === 'celestrak.org' || (host !== null && host.endsWith('.celestrak.org'));
+    });
+    assert.deepEqual(
+      offending,
+      [],
       `${name} must not allow celestrak.org — the browser fetches GP data only ` +
         'from the Orbit Data mirror',
     );
