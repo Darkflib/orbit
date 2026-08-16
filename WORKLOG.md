@@ -67,10 +67,34 @@ smudging showing up in the measurement rather than in a photograph.)
   buffer sized for the old ratio is stretched by the compositor, which blurs
   *everything*), and both views refresh their uniforms.
 - **`test/dot-size.test.mjs`** — asserts the apparent size is identical across
-  pixel ratios, that the shader's `gl_PointSize` is scaled by the ratio at all
-  (the regression itself, checked against the source text), that the old law was
-  ~2x oversized at 1x, and that degenerate depths cannot yield a `NaN` point
-  size — some drivers drop the entire draw call for one.
+  pixel ratios, that the old law was ~2x oversized at 1x, and that degenerate
+  depths cannot yield a `NaN` point size — some drivers drop the entire draw
+  call for one.
+
+### Testing the shader without a GL context
+Review (CodeRabbit) pointed out that the first draft only checked the shader's
+*text*: that a `uPixelRatio` appeared in the `gl_PointSize` assignment. Fair —
+that leaves the order unchecked, and the order is the whole bug. Clamping the
+framebuffer size instead, `clamp(uSize / depth * uPixelRatio, …)`, reads like
+the same line and puts the ceiling at 7 *framebuffer* pixels: 3.5 CSS px on a 2x
+display, 7 on a 1x one. Exactly what was just fixed, one level down.
+
+Tightening the regex was the wrong answer to that — pinning the expression
+character by character passes whenever the characters are unchanged, which is
+not the property, and fails on every reformat. So the test compiles the shader
+instead: the scalar path of `void main()` translates to JS almost verbatim
+(`float x = …` to `let`, the `gl_PointSize` assignment to a `return`, vector
+lines skipped, `clamp`/`max` supplied), and the result is checked against
+`globeDotSizePx(depth) * ratio` over a sweep of depths *and* ratios. `mv` is
+handed in rather than derived — `mv.z` is view-space depth by definition, and
+that is where the translation stops.
+
+Confirmed by mutation, since a test this indirect is worth distrusting: putting
+the ratio inside the clamp, dropping the clamp, scaling `uSize`, swapping the
+bounds, and restoring the original ratio-free line each fail it; hoisting a
+local and re-wrapping the expression passes. The line-based first attempt at the
+translation failed that last case — declarations are free to wrap, so it splits
+on statements.
 
 ## 2026-08-15 — Removing the browser's direct CelesTrak fallback
 

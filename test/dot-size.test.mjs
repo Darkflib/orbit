@@ -24,6 +24,58 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const satellitesJs = await readFile(join(here, '..', 'src', 'satellites.js'), 'utf8');
 
+// The globe's vertex shader, as source text. GLSL cannot be imported, and a
+// headless GL context is far more machinery than this needs — but the shader is
+// a short arithmetic expression over uniforms, so it can be read out of the file
+// and evaluated directly (see shaderSizeExpression below). That is worth more
+// than matching its text with a regex: a transcription test passes whenever the
+// characters are unchanged, which is not the property anyone cares about and
+// breaks on every harmless reformat.
+const vertexShader = satellitesJs.match(/vertexShader:[^`]*`([\s\S]*?)`/)?.[1] ?? '';
+
+// The shader's gl_PointSize computation, as a callable. Only the scalar path is
+// translated: `float x = …;` declarations become `let`, the gl_PointSize
+// assignment becomes the return, and the vector lines (which JS has no business
+// evaluating) are skipped. That covers the whole GLSL subset the sizing maths
+// uses — clamp, max, arithmetic and uniform reads — and it leaves the shader
+// free to hoist locals or reformat, which matching its text would not.
+//
+// `mv` is supplied rather than derived: mv.z is view-space depth by definition,
+// which is the seam this stops at. `-mv.z` then comes out right on its own.
+function compileShaderPointSize(glsl) {
+  const body = (glsl.match(/void main\(\)\s*{([\s\S]*)}/)?.[1] ?? '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  // Split on statements rather than lines: a declaration is free to wrap.
+  const lines = [];
+  for (const raw of body.split(';')) {
+    const stmt = raw.trim().replace(/\s+/g, ' ');
+    const decl = stmt.match(/^float\s+(\w+\s*=.*)$/);
+    if (decl) { lines.push(`let ${decl[1]};`); continue; }
+    const assign = stmt.match(/^gl_PointSize\s*=(.*)$/);
+    if (assign) lines.push(`return ${assign[1]};`);
+  }
+  assert.ok(lines.some((l) => l.startsWith('return ')),
+    'could not find a scalar gl_PointSize assignment in the vertex shader');
+
+  const fn = new Function(
+    'uSize', 'uSizeRange', 'uPixelRatio', 'aVisible', 'mv', 'max', 'min', 'clamp',
+    lines.join('\n'),
+  );
+  return (depth, dpr) => fn(
+    GLOBE_DOT_SCALE,
+    { x: GLOBE_DOT_MIN_PX, y: GLOBE_DOT_MAX_PX },
+    renderPixelRatio(dpr),
+    1,
+    { z: -depth },
+    Math.max,
+    Math.min,
+    (x, lo, hi) => Math.min(Math.max(x, lo), hi),
+  );
+}
+
+const shaderPointSizePx = compileShaderPointSize(vertexShader);
+
 // What the shader ultimately writes into gl_PointSize, for a satellite `depth`
 // scene units from the eye on a display of the given ratio.
 const framebufferPx = (depth, dpr) => globeDotSizePx(depth) * renderPixelRatio(dpr);
@@ -50,14 +102,40 @@ test('the shader converts CSS pixels to framebuffer pixels', () => {
   // Guards the regression itself: the sizing law is only honest if the shader
   // that applies it also applies the ratio. A gl_PointSize assignment with no
   // uPixelRatio factor is the exact shape of the original bug.
-  const assignment = satellitesJs.match(/gl_PointSize\s*=([^;]*);/);
-  assert.ok(assignment, 'satellites.js should assign gl_PointSize');
+  const assignment = vertexShader.match(/gl_PointSize\s*=([^;]*);/);
+  assert.ok(assignment, 'the vertex shader should assign gl_PointSize');
   assert.match(assignment[1], /uPixelRatio/,
     'gl_PointSize must be scaled by the pixel ratio, or dots resize with the display');
-  // And the clamp must come from the shared constants rather than a literal, so
+  // And the sizes must come from the shared constants rather than literals, so
   // the tests below describe the shipped sizes and not a stale copy of them.
   assert.match(satellitesJs, /uSizeRange:\s*{\s*value:\s*new THREE\.Vector2\(GLOBE_DOT_MIN_PX, GLOBE_DOT_MAX_PX\)/);
   assert.match(satellitesJs, /uSize:\s*{\s*value:\s*GLOBE_DOT_SCALE\s*}/);
+});
+
+test('the shader writes exactly globeDotSizePx x the pixel ratio', () => {
+  // The strongest form of the claim available without a GL context: run the
+  // shader's own maths, with the uniforms the material supplies, and check it
+  // against the law the rest of these tests are written against.
+  //
+  // Sweeping the ratio as well as the depth is what pins the *order*. Clamping
+  // the framebuffer size instead — clamp(uSize / depth * uPixelRatio, …) —
+  // reads like the same line and reintroduces the same bug somewhere subtler:
+  // the ceiling would become 7 *framebuffer* pixels, i.e. 3.5 CSS px on a 2x
+  // display and 7 on a 1x one. A drifted constant, a dropped clamp and an
+  // inverted bound all fail here too.
+  const depths = [NEAR_DEPTH, 0.5, 1, 5, 15, 22, 40, 60, FAR_DEPTH, 1e4,
+    // Including the degenerate ones the shader guards with its own max().
+    0, -0, 1e-12, -5];
+
+  for (const dpr of [1, 1.25, 2, 3]) {
+    for (const depth of depths) {
+      assert.equal(
+        shaderPointSizePx(depth, dpr),
+        globeDotSizePx(depth) * renderPixelRatio(dpr),
+        `shader and globeDotSizePx disagree at depth ${depth}, ratio ${dpr}`,
+      );
+    }
+  }
 });
 
 test('dots stay in a legible band across the whole zoom range', () => {
