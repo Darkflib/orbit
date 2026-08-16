@@ -59,6 +59,20 @@ export function createWakeLock() {
       // No gesture yet, policy refusal, or unsupported in this context.
     } finally {
       pending = false;
+      // A request that went stale has just handed its lock back, and the state
+      // that superseded it may itself want one. Tapping pause and immediately
+      // play does exactly this: disable() bumps the generation, the enable()
+      // right behind it finds `pending` still true and returns, and without
+      // this retry the in-flight request releases into a world that wants a
+      // lock and nothing is left to ask for one — the screen sleeps mid-play.
+      //
+      // It cannot spin: the retry only fires when the generation moved *during*
+      // the request, which takes a drop(), which takes a pause or a
+      // backgrounding. Each retry re-reads the generation as its own baseline.
+      if (mine !== generation && wanted && !sentinel
+          && document.visibilityState === 'visible') {
+        acquire();
+      }
     }
   }
 

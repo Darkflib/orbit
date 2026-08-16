@@ -135,8 +135,10 @@ Two things worth knowing:
   installed web apps — so an installed Orbit keeps its catalogue where a
   browser tab would quietly lose it.
 - If a release ever leaves the app in a bad state, loading it once with
-  `?sw=off` clears every cache, unregisters the service worker and serves the
-  next load straight from the network.
+  `?sw=off` clears Orbit's own caches, unregisters Orbit's service worker and
+  serves the next load straight from the network. It is scoped deliberately:
+  GitHub Pages gives every project on an account the same origin, so a blanket
+  teardown would take out unrelated sites' offline support too.
 
 ## How it works
 
