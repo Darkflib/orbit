@@ -11,13 +11,24 @@
   -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!--
-    Content Security Policy. Every executable and every image now comes from
-    this origin — the libraries and Earth textures are vendored under vendor/ —
-    so the only external hosts left are the two data sources:
-      - connect to orbit-data.mikepreston.org (primary static data mirror)
-      - connect to celestrak.org          (emergency GP fallback)
-    Dropping cdn.jsdelivr.net from script-src/worker-src/img-src is the security
+    Content Security Policy. Two separate decisions have narrowed this to a
+    single external host, and both are load-bearing.
+
+    Every executable and every image now comes from this origin — the libraries
+    and Earth textures are vendored under vendor/ — so cdn.jsdelivr.net is gone
+    from script-src, worker-src, img-src and connect-src. That is the security
     half of vendoring: no third party can execute in this origin any more.
+
+    celestrak.org is deliberately NOT in connect-src either. The browser must
+    never fetch elements from CelesTrak directly: an uncoordinated fleet of tabs
+    failing over to them is what got this project's mirror host firewalled for
+    breaching their fair-use policy (see the note above ORBIT_DATA_ORIGIN in
+    src/constants.js). A mirror outage degrades to the localStorage cache
+    instead. The satcat link in the info panel is a normal navigation, which
+    connect-src does not govern, so it keeps working.
+
+    What is left is the one origin the app fetches data from:
+      - connect to orbit-data.mikepreston.org (the only GP data source)
     The inline import map is allow-listed by its sha256 hash — if you change the
     import map you MUST recompute this hash (openssl / browser console) or the
     map will be blocked; test/csp.test.mjs fails when the two drift apart.
@@ -32,7 +43,7 @@
     object-src 'none';
     script-src 'self' 'sha256-5DDPIlTnTDqT/6xVAQ3h8qr3AGG8eZDv8+/1GTlGZKQ=';
     worker-src 'self';
-    connect-src 'self' https://orbit-data.mikepreston.org https://celestrak.org;
+    connect-src 'self' https://orbit-data.mikepreston.org;
     img-src 'self' data:;
     style-src 'self';
     font-src 'self';

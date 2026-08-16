@@ -1,5 +1,13 @@
-// Tests for the GP fetch layer (gp.js): mirror-first fetching, CelesTrak
-// failover, browser-cache fallback, and the per-fetch timeout.
+// Tests for the GP fetch layer (gp.js): mirror-only fetching, browser-cache
+// fallback, and the per-fetch timeout.
+//
+// The contract these assert is deliberately narrow: the Orbit Data mirror is
+// the *only* origin the browser contacts for elements, and every failure mode
+// degrades to the localStorage copy or to a clean error rather than to
+// CelesTrak. Direct upstream fetches from the browser are what got the
+// project's mirror host firewalled for breaching CelesTrak's fair-use policy,
+// so "no second origin is ever tried" is the property under test, not an
+// implementation detail.
 //
 // gp.js is browser code, so it reaches for `localStorage` and the global
 // `fetch`. Both are stubbed here; nothing touches the network.
@@ -68,7 +76,7 @@ function okFetch(options) {
   return async () => okResponse(options);
 }
 
-test('the Orbit Data mirror is used without contacting CelesTrak when healthy', async () => {
+test('a healthy fetch reads the Orbit Data mirror and nothing else', async () => {
   globalThis.localStorage.clear();
   const calls = [];
   globalThis.fetch = async (url) => {
@@ -84,38 +92,56 @@ test('the Orbit Data mirror is used without contacting CelesTrak when healthy', 
   assert.equal(result.fromCache, false);
 });
 
-test('CelesTrak is used only after the mirror fails', async () => {
+test('a mirror error is not retried against CelesTrak', async () => {
   globalThis.localStorage.clear();
   const calls = [];
   globalThis.fetch = async (url) => {
     calls.push(url);
-    if (url === 'https://orbit-data.mikepreston.org/v1/gp/stations.json') {
-      return { ok: false, status: 503, json: async () => ({}) };
-    }
-    return okResponse();
+    return { ok: false, status: 503, json: async () => ({}) };
   };
 
-  const result = await fetchGroup('stations');
+  await assert.rejects(
+    () => fetchGroup('stations'),
+    /GP data unavailable \(orbit-data: HTTP 503\)/,
+  );
 
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0], 'https://orbit-data.mikepreston.org/v1/gp/stations.json');
-  assert.match(calls[1], /^https:\/\/celestrak\.org\//);
-  assert.equal(result.source, 'celestrak');
+  assert.deepEqual(calls, ['https://orbit-data.mikepreston.org/v1/gp/stations.json']);
 });
 
-test('a nonempty malformed mirror payload also falls back to CelesTrak', async () => {
+test('a nonempty malformed mirror payload is not retried against CelesTrak', async () => {
   globalThis.localStorage.clear();
-  let calls = 0;
-  globalThis.fetch = async () => {
-    calls += 1;
-    if (calls === 1) return { ...okResponse(), json: async () => [{}] };
-    return okResponse();
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return { ...okResponse(), json: async () => [{}] };
   };
 
-  const result = await fetchGroup('geo');
+  await assert.rejects(
+    () => fetchGroup('geo'),
+    /GP data unavailable \(orbit-data: no usable elements returned\)/,
+  );
 
-  assert.equal(calls, 2);
-  assert.equal(result.source, 'celestrak');
+  assert.deepEqual(calls, ['https://orbit-data.mikepreston.org/v1/gp/geo.json']);
+});
+
+test('no fetch path leaves the mirror origin, for groups or the decaying set', async () => {
+  globalThis.localStorage.clear();
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return { ok: false, status: 500, json: async () => ({}) };
+  };
+
+  await assert.rejects(() => fetchGroup('active'));
+  await assert.rejects(() => fetchDecaying());
+
+  assert.equal(calls.length, 2, 'one attempt per call, no failover');
+  for (const url of calls) {
+    assert.ok(
+      url.startsWith('https://orbit-data.mikepreston.org/'),
+      `requested ${url}, which is not the mirror`,
+    );
+  }
 });
 
 test('the decaying watch list uses the special-decaying mirror artifact', async () => {
@@ -166,7 +192,7 @@ test('a stalled fetch aborts within the timeout instead of hanging (no cache)', 
   const started = Date.now();
   await assert.rejects(
     () => fetchGroup('starlink', { timeoutMs: 30 }),
-    /orbit-data: aborted.*celestrak: aborted/i,
+    /^Error: GP data unavailable \(orbit-data: aborted\)$/,
   );
   assert.ok(Date.now() - started < 2000, 'should reject promptly, not hang');
 });
@@ -178,12 +204,12 @@ test('a stalled response body (headers in, body hanging) also times out', async 
   const started = Date.now();
   await assert.rejects(
     () => fetchGroup('gnss', { timeoutMs: 30 }),
-    /orbit-data: aborted.*celestrak: aborted/i,
+    /^Error: GP data unavailable \(orbit-data: aborted\)$/,
   );
   assert.ok(Date.now() - started < 2000, 'should reject promptly, not hang on the body');
 });
 
-test('both remote failures fall back to stale browser data', async () => {
+test('a mirror failure falls back to stale browser data', async () => {
   globalThis.localStorage.clear();
 
   globalThis.fetch = okFetch();

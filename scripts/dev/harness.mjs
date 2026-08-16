@@ -55,18 +55,23 @@ export function makeRecords(count = 600, { named = [] } = {}) {
   }));
 }
 
-// Serve the element sets from both the static mirror and the CelesTrak
-// fallback, so a run is fast, deterministic and unaffected by either being down.
+// Serve the element sets from the static mirror, the only origin the app
+// fetches GP data from, so a run is fast, deterministic and unaffected by the
+// mirror being down.
+//
+// celestrak.org is routed too, but to an abort rather than a payload: the app
+// must never request it (see the note above ORBIT_DATA_ORIGIN in
+// src/constants.js), and a run that quietly reintroduced that fetch should fail
+// loudly in the harness instead of being served stub data and looking healthy.
 export async function stubElementSources(context, records = makeRecords()) {
   const body = JSON.stringify(records);
-  for (const pattern of ['**orbit-data.mikepreston.org/**', '**celestrak.org/**']) {
-    await context.route(pattern, (route) => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      headers: { 'access-control-allow-origin': '*' },
-      body,
-    }));
-  }
+  await context.route('**orbit-data.mikepreston.org/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    headers: { 'access-control-allow-origin': '*' },
+    body,
+  }));
+  await context.route('**celestrak.org/**', (route) => route.abort('blockedbyclient'));
 }
 
 // Kegworth — the observer the project's pass validation uses throughout.

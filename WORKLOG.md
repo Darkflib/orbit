@@ -1,5 +1,172 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-16 — Globe-view dots rendered out of focus on 1x displays
+
+Reported from a Qubes OS box running Firefox: in Sky view the dots are fine, in
+Globe view they are blurry — and still blurry with the software renderer, which
+ruled out the GPU driver the reporter reasonably suspected first.
+
+Both views share one renderer and one canvas, so anything about the canvas
+itself would have blurred them equally. The difference was entirely in the point
+material. `gl_PointSize` is measured in **framebuffer** pixels; the globe's
+shader wrote `clamp(260 / depth, 0, 14)` straight into it with no reference to
+`devicePixelRatio`. That is not a fixed-size dot — it is a dot whose *apparent*
+size is inversely proportional to the display's pixel ratio, so a size that
+looked right on the 2x display it was tuned on came out twice as wide on an
+ordinary 1x screen. `makePointsMaterial` in `skyview.js` had multiplied by the
+ratio since the harness caught the same mistake there (it is the first entry in
+`scripts/dev/README.md`), which is exactly why Sky view looked correct on the
+same machine. Globe view was simply never fixed.
+
+Two things then compounded, both consequences of the doubling rather than
+separate faults. At 14px the glow sprite was mostly halo: its gradient was
+already below 0.35 alpha just past half the radius, so a dot that was legible
+small became a smudge with no solid centre. And 14px is the *clamp* — at the
+default camera framing every near-side satellite sat on it, so the field lost
+its size variation too and read as one uniform blanket of blobs. Both are
+visible in the reporter's photo.
+
+### Measured, on the real app in a real browser
+An ad-hoc driver (per `scripts/dev/README.md` — measure the claim, do not
+eyeball the screenshot) screenshots the globe at each pixel ratio, finds the
+dots drawn against empty sky beyond the limb, and reports their width in CSS
+pixels and the share of each blob at ≥50% of its own peak brightness:
+
+| | before | after |
+|---|---|---|
+| 1x display | 11.0px wide, 34% core | 6.0px wide, 53% core |
+| 2x display | 5.5px wide, 36% core | 6.0px wide, 52% core |
+
+The before row is the bug stated numerically: the same build, the same scene,
+twice the apparent size on one display than the other. The after row is the
+property that was missing — apparent size no longer depends on the display.
+(The 1x "before" run also *found* less than half as many dots, because at 11px
+neighbours merge into each other and the detector discards them. That is the
+smudging showing up in the measurement rather than in a photograph.)
+
+### What landed
+- **`src/constants.js`** — `globeDotSizePx(depth)` states the sizing law in CSS
+  pixels, with `GLOBE_DOT_SCALE` / `GLOBE_DOT_MIN_PX` / `GLOBE_DOT_MAX_PX`; the
+  shader applies the identical clamp from the same constants and multiplies by
+  the ratio last. `renderPixelRatio(dpr)` is now the one place the ratio is
+  read, replacing three near-copies — one of which was
+  `Math.min(window.devicePixelRatio, 2)`, i.e. `NaN` on a browser that reports
+  no `devicePixelRatio`, which would have sized the drawing buffer to nothing.
+- **Sizes** — the ceiling is 7 CSS px, which is what a 2x display already drew,
+  so nothing changes on the display the old value was tuned for. New is the
+  1.5px floor: an unclamped `1/depth` is sub-pixel at full zoom-out, and a
+  satellite tracker that hides satellites has failed.
+- **`src/satellites.js`** — the glow sprite keeps a solid core out to 40% of its
+  radius before falling off. Its mipmaps are also off: the sprite is only ever
+  minified, the LOD a driver picks comes from derivatives of `gl_PointCoord`
+  (which point sprites are a shaky case for, software rasterizers especially),
+  and a smooth radial ramp has nothing that would alias without them.
+- **Staleness** — `devicePixelRatio` changes under browser zoom and when a
+  window moves to a differently-scaled display, and a resize is the only
+  notification either gives. The renderer now re-applies it there (a drawing
+  buffer sized for the old ratio is stretched by the compositor, which blurs
+  *everything*), and both views refresh their uniforms.
+- **`test/dot-size.test.mjs`** — asserts the apparent size is identical across
+  pixel ratios, that the old law was ~2x oversized at 1x, and that degenerate
+  depths cannot yield a `NaN` point size — some drivers drop the entire draw
+  call for one.
+
+### Testing the shader without a GL context
+Review (CodeRabbit) pointed out that the first draft only checked the shader's
+*text*: that a `uPixelRatio` appeared in the `gl_PointSize` assignment. Fair —
+that leaves the order unchecked, and the order is the whole bug. Clamping the
+framebuffer size instead, `clamp(uSize / depth * uPixelRatio, …)`, reads like
+the same line and puts the ceiling at 7 *framebuffer* pixels: 3.5 CSS px on a 2x
+display, 7 on a 1x one. Exactly what was just fixed, one level down.
+
+Tightening the regex was the wrong answer to that — pinning the expression
+character by character passes whenever the characters are unchanged, which is
+not the property, and fails on every reformat. So the test compiles the shader
+instead: the scalar path of `void main()` translates to JS almost verbatim
+(`float x = …` to `let`, the `gl_PointSize` assignment to a `return`, vector
+lines skipped, `clamp`/`max` supplied), and the result is checked against
+`globeDotSizePx(depth) * ratio` over a sweep of depths *and* ratios. `mv` is
+handed in rather than derived — `mv.z` is view-space depth by definition, and
+that is where the translation stops.
+
+Confirmed by mutation, since a test this indirect is worth distrusting: putting
+the ratio inside the clamp, dropping the clamp, scaling `uSize`, swapping the
+bounds, and restoring the original ratio-free line each fail it; hoisting a
+local and re-wrapping the expression passes. The line-based first attempt at the
+translation failed that last case — declarations are free to wrap, so it splits
+on statements.
+
+## 2026-08-15 — Removing the browser's direct CelesTrak fallback
+
+CelesTrak (Dr T.S. Kelso) firewalled the data-mirror server's IP for excessive
+bandwidth. The complaint had two parts, and both were fair: we requested the
+bandwidth-heavy JSON format, and we requested the `active` GROUP *alongside*
+eleven GROUPs that are subsets of `active` — so every satellite in a
+constellation layer came down the wire twice. The mirror (a separate repo) was
+fixed first: it now fetches `active` once per cycle and derives the subsets
+locally.
+
+The frontend still had the identical anti-pattern, only worse, because it ran
+from every visitor's browser. `fetchElements` tried the mirror and then fell
+back to `celestrak.org/NORAD/elements/gp.php?GROUP=…&FORMAT=JSON` for each of
+the twelve GROUPs `LAYERS` names — `active` and eleven of its own subsets —
+plus `SPECIAL=DECAYING`, on a two-hour refresh. A
+mirror hiccup during a deploy is precisely the moment every open tab fails over
+at once, so the failure mode was a synchronised stampede of duplicated JSON.
+
+### Why it could not be fixed the way the server was
+The server fix works because there is one process, with one bandwidth budget,
+that can be taught to deduplicate and back off. A browser fleet has none of
+that. It cannot share a ledger, cannot be rate-limited from here, and cannot
+honour a 403 "stop" — each tab just sees one failed request and keeps its own
+two-hour schedule. There is no version of the fallback that is polite, so it is
+gone rather than tuned.
+
+What remains covers the outage it was added for, and none of it touches
+CelesTrak: the mirror, then the stale `localStorage` copy, served at any age and
+flagged `stale` in the UI.
+
+Worth being precise about the limit of that, because the first draft of this
+entry was not. There is no third rung. A visitor arriving during a mirror
+outage with an empty cache gets the GP error and no satellites — the snapshot
+bundled in `data/` is catalogue metadata and sky files, which `src/data.js`
+serves for enrichment and search, and it holds no element sets. Review caught
+the overclaim in three places before it shipped.
+
+### What landed
+- **`src/gp.js`** — `fetchElements` is a single mirror attempt instead of an
+  `attempts` list; the `upstreamUrl` parameter is gone from it and from both
+  callers (`fetchGroup`, `fetchDecaying`). Degrade-to-stale-cache is unchanged.
+  The total-failure message no longer joins per-source failures — with one
+  source it reads `GP data unavailable (orbit-data: HTTP 503)`.
+- **`src/constants.js`** — `CELESTRAK_URL`, `CELESTRAK_SPECIAL_URL` and the now
+  unreferenced `GP_FETCH_TIMEOUT_MS` removed. The note above `ORBIT_DATA_ORIGIN`
+  records the fair-use incident and says plainly not to re-add the fallback;
+  without that, the next person to see a mirror outage rebuilds it.
+- **`index.html`** — `celestrak.org` dropped from `connect-src`, so a
+  reintroduced fetch is blocked by the browser rather than shipped. The info
+  panel's CelesTrak satcat link (`src/main.js`) is a *navigation*, which
+  `connect-src` does not govern, and keeps working.
+- **`scripts/dev/harness.mjs`** — `stubElementSources` serves the mirror only,
+  and routes `celestrak.org` to an aborted request so a regression fails the
+  harness loudly instead of being handed stub data.
+- **Docs** — README highlight and module list, `SECURITY.md`'s data-and-privacy
+  paragraph (which still claimed the browser fetches CelesTrak directly).
+
+### Superseding an earlier entry
+The 2026-08-10 hand-off below says "`orbit-data.mikepreston.org` is primary,
+CelesTrak is the fallback, the bundled snapshot is the last resort". The middle
+term no longer exists; the sentence otherwise stands.
+
+### Verified
+- Suite **118 tests**, all passing (was 115). `test/gp.test.mjs` asserts the new
+  contract rather than losing the coverage: a healthy fetch touches only the
+  mirror; a mirror error, a malformed payload and a timeout each fail without a
+  second request; a group fetch and a decaying fetch never leave the mirror
+  origin; and a mirror failure with a cache present still degrades to stale
+  browser data. `test/csp.test.mjs` asserts no directive permits `celestrak.org`
+  *and* that the satcat link survives (no `navigate-to` directive).
+- No request was made to celestrak.org at any point in this work.
 ## 2026-08-14 — "Is there a mobile app?": Orbit becomes installable
 
 Two users asked. The honest answer was that almost everything a mobile app needs
@@ -66,7 +233,8 @@ Four defects, none of which a unit test or a diff would have shown:
    off it threw an uncaught error at boot, on every viewport.
 3. **21.6 seconds of "Fetching orbital elements…" on an offline launch.** Two
    doomed fetches timing out in series before falling back to exactly the cache
-   they could have read immediately. Skipping ahead when
+   they could have read immediately — one attempt now that the CelesTrak
+   fallback is gone, but still a whole timeout of nothing. Skipping ahead when
    `navigator.onLine === false` takes it to 1.7s. That flag is only trusted in
    the one direction: it can wrongly say *true* behind a captive portal, so it
    never stops a fetch that might have worked.
