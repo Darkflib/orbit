@@ -7,6 +7,7 @@ import * as satellite from 'satellite.js';
 import {
   EARTH_RADIUS, EARTH_RADIUS_KM, ORBIT_SAMPLES,
   LAYER_BY_ID, RAD2DEG,
+  GLOBE_DOT_SCALE, GLOBE_DOT_MIN_PX, GLOBE_DOT_MAX_PX, renderPixelRatio,
 } from './constants.js';
 import { ecefKmToScene, latLonToScene, fmtLat, fmtLon, fmtAlt, fmtVel, fmtPeriod } from './utils.js';
 
@@ -34,7 +35,12 @@ export class SatelliteField {
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         uTexture: { value: makeGlowSprite() },
-        uSize: { value: 260.0 },
+        // Sizes are in CSS pixels and converted to the framebuffer pixels
+        // gl_PointSize actually wants — see globeDotSizePx in constants.js for
+        // why writing a raw number there is a bug rather than a shortcut.
+        uSize: { value: GLOBE_DOT_SCALE },
+        uSizeRange: { value: new THREE.Vector2(GLOBE_DOT_MIN_PX, GLOBE_DOT_MAX_PX) },
+        uPixelRatio: { value: renderPixelRatio(window.devicePixelRatio) },
       },
       transparent: true,
       depthWrite: false,
@@ -43,14 +49,16 @@ export class SatelliteField {
         attribute vec3 aColor;
         attribute float aVisible;
         uniform float uSize;
+        uniform vec2 uSizeRange;
+        uniform float uPixelRatio;
         varying vec3 vColor;
         varying float vVisible;
         void main() {
           vColor = aColor;
           vVisible = aVisible;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = aVisible * uSize / max(-mv.z, 0.001);
-          gl_PointSize = clamp(gl_PointSize, 0.0, 14.0);
+          float px = clamp(uSize / max(-mv.z, 0.001), uSizeRange.x, uSizeRange.y);
+          gl_PointSize = aVisible * px * uPixelRatio;
           gl_Position = projectionMatrix * mv;
         }
       `,
@@ -69,6 +77,15 @@ export class SatelliteField {
     this.points = new THREE.Points(this.geometry, this.material);
     this.points.frustumCulled = false;
     this.scene.add(this.points);
+
+    // devicePixelRatio is not fixed for the life of the page: browser zoom
+    // changes it, and so does dragging the window to a display with a different
+    // scale factor. Both fire a resize, which is the only notification either
+    // gives, so the uniform is refreshed there — otherwise the dots would go
+    // back to being sized for whichever display the tab happened to open on.
+    window.addEventListener('resize', () => {
+      this.material.uniforms.uPixelRatio.value = renderPixelRatio(window.devicePixelRatio);
+    });
   }
 
   _buildOverlays() {
@@ -385,14 +402,28 @@ function makeGlowSprite() {
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d');
   const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  // A solid core out to ~40% of the radius, then a short falloff. The previous
+  // ramp was already below 0.35 alpha at just past halfway, so a dot was mostly
+  // halo: legible at 5px, a smudge once it grew. Keeping the core opaque is what
+  // makes a satellite read as a point of light rather than a bloom.
   g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.25, 'rgba(255,255,255,0.9)');
-  g.addColorStop(0.55, 'rgba(255,255,255,0.35)');
+  g.addColorStop(0.4, 'rgba(255,255,255,1)');
+  g.addColorStop(0.62, 'rgba(255,255,255,0.55)');
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  // This sprite is only ever minified — 64px of gradient drawn across a dot a
+  // few pixels wide — so mipmaps cost sharpness and buy nothing. The level a
+  // driver picks comes from derivatives of gl_PointCoord, which point sprites
+  // are a notoriously shaky case for (software rasterizers especially), and a
+  // level too far down samples a 4x4 blur of the gradient. Nothing here has the
+  // high-frequency detail that would alias without them: it is a smooth radial
+  // ramp, so bilinear sampling of the full-size texture is both sharper and
+  // cheaper.
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
   return tex;
 }
 

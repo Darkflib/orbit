@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   EARTH_RADIUS, TEXTURES, CAMERA_FOV, ZOOM_MIN_RADII, ZOOM_MAX_RADII,
-  rotateSpeedForDistance,
+  rotateSpeedForDistance, renderPixelRatio,
 } from './constants.js';
 
 export function createScene(canvas) {
@@ -13,7 +13,7 @@ export function createScene(canvas) {
     canvas,
     antialias: true,
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(renderPixelRatio(window.devicePixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
 
   const scene = new THREE.Scene();
@@ -80,6 +80,11 @@ export function createScene(canvas) {
     const h = window.innerHeight;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    // Re-applied, not just set once at startup: browser zoom changes
+    // devicePixelRatio, and a drawing buffer still sized for the old ratio gets
+    // stretched to fit by the compositor — which blurs the entire scene, not
+    // only the points this commit is chasing.
+    renderer.setPixelRatio(renderPixelRatio(window.devicePixelRatio));
     renderer.setSize(w, h);
   }
   window.addEventListener('resize', resize);

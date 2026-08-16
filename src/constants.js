@@ -61,6 +61,58 @@ export function rotateSpeedForDistance(distance, {
   return Math.min(max, Math.max(min, ideal));
 }
 
+// ---------------------------------------------------------------------------
+// Point sizing
+// ---------------------------------------------------------------------------
+
+// Backing-store scale for the canvas, and the conversion factor between the CSS
+// pixels the app reasons in and the framebuffer pixels gl_PointSize is measured
+// in. Clamped at the top because rendering 13k+ glowing points costs pixels and
+// a 3x phone display buys no visible sharpness at these dot sizes; floored at 1
+// because a browser that reports no devicePixelRatio at all must still get a
+// full-resolution canvas — Math.min(undefined, 2) is NaN, which silently
+// destroys the drawing buffer.
+export const MAX_PIXEL_RATIO = 2;
+
+export function renderPixelRatio(dpr) {
+  return Number.isFinite(dpr) && dpr > 0 ? Math.min(dpr, MAX_PIXEL_RATIO) : 1;
+}
+
+// Apparent size of a satellite dot in the globe view, in CSS pixels, for a point
+// `depth` scene units in front of the camera.
+//
+// CSS pixels, emphatically, because gl_PointSize is in *framebuffer* pixels: a
+// shader that writes a raw number there does not draw a fixed-size dot, it draws
+// one whose apparent size is inversely proportional to the display's pixel
+// ratio. The globe's shader used to do exactly that, tuned on a 2x display, so
+// on an ordinary 1x screen every satellite came out twice as wide — wide enough
+// that the soft outer falloff of the glow sprite dominated its solid core and
+// the whole field read as out of focus. Sky view has always scaled by the ratio
+// (see makePointsMaterial in skyview.js), which is why its dots looked right on
+// the very same machine; this is the globe learning the same lesson. The shader
+// applies the identical clamp, from these constants, and multiplies by the ratio
+// at the end.
+//
+// The 1/depth term is the perspective divide restated: it keeps a dot tracking
+// the apparent size of the orbit shell it sits on, so LEO thins out as the
+// camera pulls back instead of staying a constant blanket over the globe.
+export const GLOBE_DOT_SCALE = 130;    // CSS px * scene units
+// Floor: at full zoom-out a raw 1/depth dot is sub-pixel and the field all but
+// disappears — a satellite tracker that hides satellites has failed. Ceiling:
+// the close-in size, which lands next to sky view's 5.5px satellites rather than
+// dwarfing them, and is exactly what a 2x display drew before this was fixed.
+export const GLOBE_DOT_MIN_PX = 1.5;
+export const GLOBE_DOT_MAX_PX = 7;
+
+export function globeDotSizePx(depth, {
+  scale = GLOBE_DOT_SCALE,
+  min = GLOBE_DOT_MIN_PX,
+  max = GLOBE_DOT_MAX_PX,
+} = {}) {
+  const d = Math.max(depth, 1e-3);
+  return Math.min(max, Math.max(min, scale / d));
+}
+
 // GP data is only refetched every this many milliseconds. In between, SGP4
 // propagation runs entirely in the browser — no further network calls.
 export const GP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
