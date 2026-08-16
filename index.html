@@ -8,8 +8,16 @@
     workers down to this origin plus the specific external hosts the app needs:
       - script/img/worker from cdn.jsdelivr.net (three.js, satellite.js, astronomy-engine, Earth textures)
       - connect to cdn.jsdelivr.net       (module source maps in developer tools)
-      - connect to orbit-data.mikepreston.org (primary static data mirror)
-      - connect to celestrak.org          (emergency GP fallback)
+      - connect to orbit-data.mikepreston.org (the only origin GP data is fetched from)
+
+    celestrak.org is deliberately NOT in connect-src. The browser must never
+    fetch elements from CelesTrak directly: an uncoordinated fleet of tabs
+    failing over to them is what got this project's mirror host firewalled for
+    breaching their fair-use policy (see the note above ORBIT_DATA_ORIGIN in
+    src/constants.js). A mirror outage degrades to the localStorage cache
+    instead. The satcat link in the info panel is a normal
+    navigation, which connect-src does not govern, so it keeps working.
+
     The inline import map is allow-listed by its sha256 hash — if you change the
     import map you MUST recompute this hash (openssl / browser console) or the
     map will be blocked. `object-src 'none'` and `base-uri 'self'` close off
@@ -23,7 +31,7 @@
     object-src 'none';
     script-src 'self' https://cdn.jsdelivr.net 'sha256-Y1zW/wPig1IAo9v4XKMdWCGjD4b9+ypEfU9FTOSPOR0=';
     worker-src 'self' https://cdn.jsdelivr.net;
-    connect-src 'self' https://cdn.jsdelivr.net https://orbit-data.mikepreston.org https://celestrak.org;
+    connect-src 'self' https://cdn.jsdelivr.net https://orbit-data.mikepreston.org;
     img-src 'self' data: https://cdn.jsdelivr.net;
     style-src 'self';
     font-src 'self';

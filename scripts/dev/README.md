@@ -89,9 +89,12 @@ import {
 } from './harness.mjs';
 ```
 
-`stubElementSources` serves deterministic OMM records from both the static
-mirror and the CelesTrak fallback, so a run is fast and unaffected by either
-being down. `seedObserver` writes the Kegworth reference location into
+`stubElementSources` serves deterministic OMM records from the static mirror —
+the only origin the app fetches elements from — so a run is fast and unaffected
+by the mirror being down. It also routes `celestrak.org` to an aborted request
+rather than to stub data, so a regression that reintroduced a direct upstream
+fetch shows up as an error instead of passing silently.
+`seedObserver` writes the Kegworth reference location into
 `localStorage` before any script runs, which Sky mode needs.
 
 Ad-hoc drivers are worth writing for anything visual — measure the thing you

@@ -26,8 +26,15 @@ coverage footprint.
 
 - **Static and resilient.** The app reads atomically published files from
   `orbit-data.mikepreston.org`, then caches elements compactly in
-  `localStorage`. If the mirror is unavailable it falls back to CelesTrak
-  directly, and if both are unavailable it uses the last browser-cached copy.
+  `localStorage`. That mirror is the only origin it fetches orbital data from:
+  if it is unavailable the app serves the last browser-cached copy at any age,
+  flagged as stale in the UI. A first visit during an outage has no cache to
+  fall back on and reports the error — the bundled snapshot carries catalogue
+  metadata, not element sets. The browser never fetches CelesTrak directly —
+  a fleet of tabs failing over at once cannot be rate-limited or told to stop,
+  and doing so breaches [CelesTrak's usage
+  policy](https://celestrak.org/usage-policy.php). Only the mirror talks
+  upstream, once per publication cycle.
 - **OMM, not legacy TLE.** CelesTrak exhausted 5-digit catalog numbers in 2026;
   new objects (6-digit IDs) are no longer published as TLEs. Orbit uses the OMM
   JSON format via `satellite.js` `json2satrec`, so it keeps working as the
@@ -116,8 +123,9 @@ scheduled CelesTrak OMM fetch ──► Orbit Data static mirror
 ```
 
 - **`src/gp.js`** — fetches mirrored CelesTrak groups (and the
-  `SPECIAL=DECAYING` set) as OMM JSON, normalises records, dedupes by NORAD id,
-  and handles direct-upstream and compact browser-cache fallbacks.
+  `SPECIAL=DECAYING` set) as OMM JSON from the mirror and nowhere else,
+  normalises records, dedupes by NORAD id, and degrades to the compact
+  browser-cache copy when the mirror is unreachable.
 - **`src/data.js`** — loads enrichment and sky files from the static mirror,
   falling back to the snapshot bundled with the app.
 - **`src/reentry.js`** — the reentry mode: SGP4 forward-propagation to an

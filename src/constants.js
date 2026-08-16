@@ -66,23 +66,44 @@ export function rotateSpeedForDistance(distance, {
 export const GP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const GP_CACHE_PREFIX = 'orbit.gp.';
 
-// Static first-party data mirror. The browser tries this origin before talking
-// to upstream providers, while keeping direct CelesTrak and bundled catalogue
-// data as emergency fallbacks during deployment or a mirror outage.
+// Static first-party data mirror. This is the *only* origin the browser fetches
+// orbital data from — there is no direct-to-CelesTrak fallback, and one must not
+// be re-added.
+//
+// CelesTrak (Dr T.S. Kelso) firewalled this project's mirror host on 2026-08-10
+// for breaching their 100 MB/day limit: it requested the bandwidth-heavy JSON
+// format, which is three times the size of CSV, and asked for the `active`
+// GROUP *alongside* eleven groups that are subsets of `active`, which sent the
+// same elements down the wire twice. The mirror now fetches `active` once, in
+// CSV, and derives the subsets locally. The policy is at
+// https://celestrak.org/usage-policy.php and the daily limit is documented at
+// https://celestrak.org/NORAD/documentation/gp-data-formats.php#update — read
+// both before adding any request to an upstream provider. See also the
+// 2026-08-15 worklog entry.
+//
+// The frontend had the identical anti-pattern, from every visitor's browser: on
+// any mirror hiccup — a deploy, a DNS blip — every open tab would fail over to
+// CelesTrak at once and stampede them with the same duplicated JSON. A browser
+// fleet cannot be rate-limited from here, cannot share a bandwidth ledger and
+// cannot be told to stop when a 403 arrives, so the fallback was not fixable the
+// way the server was; it was removed instead. A mirror outage now degrades to
+// the stale localStorage copy in gp.js, served at any age and flagged in the
+// UI — offline, and costing CelesTrak nothing. A first visit during an outage
+// has no cache and surfaces the GP error instead: the snapshot bundled in
+// data/ is catalogue metadata (names, magnitudes, object types), not element
+// sets, so it cannot stand in for GP data however much one might want it to.
 export const ORBIT_DATA_ORIGIN = 'https://orbit-data.mikepreston.org';
 export const ORBIT_DATA_GP_URL = (dataset) =>
   `${ORBIT_DATA_ORIGIN}/v1/gp/${dataset}.json`;
 export const ORBIT_DATA_CATALOG_URL = (path) =>
   `${ORBIT_DATA_ORIGIN}/v1/data/${path}`;
 
-// Per-fetch network timeout. Without it a single stalled CelesTrak group holds
-// the `Promise.allSettled` in `fetchLayers` open indefinitely and the app sits
-// on the loading screen. On timeout the request is aborted and falls back to a
+// Per-fetch network timeout. Without it a single stalled group holds the
+// `Promise.allSettled` in `fetchLayers` open indefinitely and the app sits on
+// the loading screen. On timeout the request is aborted and falls back to a
 // stale cache when one exists (otherwise it surfaces as a normal fetch error).
-export const GP_FETCH_TIMEOUT_MS = 15 * 1000; // 15 seconds
-
-// Fail over from the mirror promptly. The upstream timeout remains longer
-// because CelesTrak can legitimately take more time to generate large groups.
+// Kept short: the mirror serves pre-generated static files, so a response that
+// has not started within five seconds is not coming.
 export const ORBIT_DATA_FETCH_TIMEOUT_MS = 5 * 1000; // 5 seconds
 
 // A last-known-good mirror response remains usable indefinitely, but data this
@@ -93,23 +114,16 @@ export const GP_REMOTE_STALE_MS = 6 * 60 * 60 * 1000; // 6 hours
 // mirror's atomic publication cadence are two hours for every GP dataset.
 export const REENTRY_MAX_AGE_MS = GP_MAX_AGE_MS;
 
-// CelesTrak general-perturbations endpoint. CORS-enabled, no key required.
-// We request OMM in JSON: the legacy TLE format cannot represent the 6-digit
-// catalog numbers CelesTrak began issuing in 2026 (5-digit space exhausted),
-// so new objects are only available via OMM. See:
+// The mirror republishes each set as OMM in JSON, keyed by the CelesTrak GROUP
+// (or SPECIAL) name it came from — hence the group names below. OMM rather than
+// the legacy TLE format because TLE cannot represent the 6-digit catalog
+// numbers CelesTrak began issuing in 2026 (5-digit space exhausted), so new
+// objects are only available via OMM. See:
 // https://celestrak.org/NORAD/documentation/gp-data-formats.php
-export const CELESTRAK_URL = (group) =>
-  `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=JSON`;
 
-// The same endpoint also serves curated "special" data sets keyed by SPECIAL=.
-// SPECIAL=DECAYING is CelesTrak's watch list of objects whose orbits are
-// decaying toward atmospheric reentry — the source for the reentry mode.
-export const CELESTRAK_SPECIAL_URL = (special) =>
-  `https://celestrak.org/NORAD/elements/gp.php?SPECIAL=${special}&FORMAT=JSON`;
-
-// Satellite layers. Each pulls one or more CelesTrak GROUPs and is drawn with
-// its own colour. `priority` resolves duplicates (lower wins) when a catalog
-// number appears in more than one group.
+// Satellite layers. Each pulls one or more GROUPs and is drawn with its own
+// colour. `priority` resolves duplicates (lower wins) when a catalog number
+// appears in more than one group.
 export const LAYERS = [
   {
     // CelesTrak's "stations" group is the ISS and CSS complexes plus their
@@ -204,6 +218,9 @@ export const REENTRY_LAYER = {
   id: 'reentry',
   label: 'Reentry watch',
   color: '#ff4d4d',
+  // Provenance only, no longer used to build a URL: the mirror's
+  // `special-decaying` artifact is CelesTrak's SPECIAL=DECAYING watch list of
+  // objects whose orbits are decaying toward atmospheric reentry.
   special: 'DECAYING',
   priority: 0,
 };
