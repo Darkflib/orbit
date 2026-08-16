@@ -1,5 +1,101 @@
 # Worklog — data enrichment & visibility
 
+## 2026-08-16 — Globe-view dots rendered out of focus on 1x displays
+
+Reported from a Qubes OS box running Firefox: in Sky view the dots are fine, in
+Globe view they are blurry — and still blurry with the software renderer, which
+ruled out the GPU driver the reporter reasonably suspected first.
+
+Both views share one renderer and one canvas, so anything about the canvas
+itself would have blurred them equally. The difference was entirely in the point
+material. `gl_PointSize` is measured in **framebuffer** pixels; the globe's
+shader wrote `clamp(260 / depth, 0, 14)` straight into it with no reference to
+`devicePixelRatio`. That is not a fixed-size dot — it is a dot whose *apparent*
+size is inversely proportional to the display's pixel ratio, so a size that
+looked right on the 2x display it was tuned on came out twice as wide on an
+ordinary 1x screen. `makePointsMaterial` in `skyview.js` had multiplied by the
+ratio since the harness caught the same mistake there (it is the first entry in
+`scripts/dev/README.md`), which is exactly why Sky view looked correct on the
+same machine. Globe view was simply never fixed.
+
+Two things then compounded, both consequences of the doubling rather than
+separate faults. At 14px the glow sprite was mostly halo: its gradient was
+already below 0.35 alpha just past half the radius, so a dot that was legible
+small became a smudge with no solid centre. And 14px is the *clamp* — at the
+default camera framing every near-side satellite sat on it, so the field lost
+its size variation too and read as one uniform blanket of blobs. Both are
+visible in the reporter's photo.
+
+### Measured, on the real app in a real browser
+An ad-hoc driver (per `scripts/dev/README.md` — measure the claim, do not
+eyeball the screenshot) screenshots the globe at each pixel ratio, finds the
+dots drawn against empty sky beyond the limb, and reports their width in CSS
+pixels and the share of each blob at ≥50% of its own peak brightness:
+
+| | before | after |
+|---|---|---|
+| 1x display | 11.0px wide, 34% core | 6.0px wide, 53% core |
+| 2x display | 5.5px wide, 36% core | 6.0px wide, 52% core |
+
+The before row is the bug stated numerically: the same build, the same scene,
+twice the apparent size on one display than the other. The after row is the
+property that was missing — apparent size no longer depends on the display.
+(The 1x "before" run also *found* less than half as many dots, because at 11px
+neighbours merge into each other and the detector discards them. That is the
+smudging showing up in the measurement rather than in a photograph.)
+
+### What landed
+- **`src/constants.js`** — `globeDotSizePx(depth)` states the sizing law in CSS
+  pixels, with `GLOBE_DOT_SCALE` / `GLOBE_DOT_MIN_PX` / `GLOBE_DOT_MAX_PX`; the
+  shader applies the identical clamp from the same constants and multiplies by
+  the ratio last. `renderPixelRatio(dpr)` is now the one place the ratio is
+  read, replacing three near-copies — one of which was
+  `Math.min(window.devicePixelRatio, 2)`, i.e. `NaN` on a browser that reports
+  no `devicePixelRatio`, which would have sized the drawing buffer to nothing.
+- **Sizes** — the ceiling is 7 CSS px, which is what a 2x display already drew,
+  so nothing changes on the display the old value was tuned for. New is the
+  1.5px floor: an unclamped `1/depth` is sub-pixel at full zoom-out, and a
+  satellite tracker that hides satellites has failed.
+- **`src/satellites.js`** — the glow sprite keeps a solid core out to 40% of its
+  radius before falling off. Its mipmaps are also off: the sprite is only ever
+  minified, the LOD a driver picks comes from derivatives of `gl_PointCoord`
+  (which point sprites are a shaky case for, software rasterizers especially),
+  and a smooth radial ramp has nothing that would alias without them.
+- **Staleness** — `devicePixelRatio` changes under browser zoom and when a
+  window moves to a differently-scaled display, and a resize is the only
+  notification either gives. The renderer now re-applies it there (a drawing
+  buffer sized for the old ratio is stretched by the compositor, which blurs
+  *everything*), and both views refresh their uniforms.
+- **`test/dot-size.test.mjs`** — asserts the apparent size is identical across
+  pixel ratios, that the old law was ~2x oversized at 1x, and that degenerate
+  depths cannot yield a `NaN` point size — some drivers drop the entire draw
+  call for one.
+
+### Testing the shader without a GL context
+Review (CodeRabbit) pointed out that the first draft only checked the shader's
+*text*: that a `uPixelRatio` appeared in the `gl_PointSize` assignment. Fair —
+that leaves the order unchecked, and the order is the whole bug. Clamping the
+framebuffer size instead, `clamp(uSize / depth * uPixelRatio, …)`, reads like
+the same line and puts the ceiling at 7 *framebuffer* pixels: 3.5 CSS px on a 2x
+display, 7 on a 1x one. Exactly what was just fixed, one level down.
+
+Tightening the regex was the wrong answer to that — pinning the expression
+character by character passes whenever the characters are unchanged, which is
+not the property, and fails on every reformat. So the test compiles the shader
+instead: the scalar path of `void main()` translates to JS almost verbatim
+(`float x = …` to `let`, the `gl_PointSize` assignment to a `return`, vector
+lines skipped, `clamp`/`max` supplied), and the result is checked against
+`globeDotSizePx(depth) * ratio` over a sweep of depths *and* ratios. `mv` is
+handed in rather than derived — `mv.z` is view-space depth by definition, and
+that is where the translation stops.
+
+Confirmed by mutation, since a test this indirect is worth distrusting: putting
+the ratio inside the clamp, dropping the clamp, scaling `uSize`, swapping the
+bounds, and restoring the original ratio-free line each fail it; hoisting a
+local and re-wrapping the expression passes. The line-based first attempt at the
+translation failed that last case — declarations are free to wrap, so it splits
+on statements.
+
 ## 2026-08-15 — Removing the browser's direct CelesTrak fallback
 
 CelesTrak (Dr T.S. Kelso) firewalled the data-mirror server's IP for excessive

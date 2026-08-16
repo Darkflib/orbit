@@ -30,7 +30,7 @@ import {
   altAzToVec, vecToAltAz, horVecToSky, makeSkyTransform, isSunlitScene,
   deviceOrientationQuaternion,
 } from './skyframe.js';
-import { EARTH_RADIUS } from './constants.js';
+import { EARTH_RADIUS, renderPixelRatio } from './constants.js';
 
 // Radius of the celestial sphere in scene units. Arbitrary — nothing here has a
 // real distance — but it wants to be comfortably inside the camera's far plane
@@ -570,6 +570,12 @@ export function createSkyView(renderer, canvas) {
   function resize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    // devicePixelRatio is read once when the materials are built, but browser
+    // zoom and a move to a differently-scaled display both change it, and a
+    // resize is the only notification either gives.
+    const ratio = renderPixelRatio(window.devicePixelRatio);
+    stars.points.material.uniforms.uPixelRatio.value = ratio;
+    sats.points.material.uniforms.uPixelRatio.value = ratio;
   }
   window.addEventListener('resize', resize);
 
@@ -621,7 +627,7 @@ function makePointsMaterial(texture, opacity) {
       uOpacity: { value: opacity },
       // gl_PointSize is in framebuffer pixels, so without this every point
       // would render at half size on a 2x display.
-      uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 2) },
+      uPixelRatio: { value: renderPixelRatio(window.devicePixelRatio) },
     },
     transparent: true,
     depthWrite: false,
