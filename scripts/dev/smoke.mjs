@@ -4,19 +4,17 @@
 // to pointer input on both a desktop and a phone viewport.
 //
 //   node scripts/dev/smoke.mjs                 # against a locally served app
-//   ORBIT_OFFLINE_CDN=1 node scripts/dev/smoke.mjs   # no route to jsDelivr
 //
 // Needs the app served first (`npm start`) and Playwright available; see
 // scripts/dev/README.md. Exits non-zero if any check fails, so it can be wired
 // into a pre-release step later if that ever seems worth it.
 // ---------------------------------------------------------------------------
 import {
-  DEFAULT_ORIGIN, installOfflineCdn, stripCsp, stubElementSources,
+  DEFAULT_ORIGIN, stubElementSources,
   seedObserver, collectErrors, makeRecords,
 } from './harness.mjs';
 
 const ORIGIN = process.env.ORBIT_ORIGIN || DEFAULT_ORIGIN;
-const OFFLINE = process.env.ORBIT_OFFLINE_CDN === '1';
 
 let chromium;
 try {
@@ -40,15 +38,18 @@ const browser = await chromium.launch(
 );
 
 async function newSession({ viewport, isMobile = false }) {
-  const context = await browser.newContext(
-    isMobile
+  const context = await browser.newContext({
+    ...(isMobile
       ? { viewport, hasTouch: true, isMobile: true, deviceScaleFactor: 2 }
-      : { viewport },
-  );
-  if (OFFLINE) {
-    await installOfflineCdn(context);
-    await stripCsp(context, ORIGIN);
-  }
+      : { viewport }),
+    // Requests a service worker makes on the page's behalf do not pass through
+    // context.route(), so with one registered the element-set stubs below are
+    // bypassed entirely and the run boots against the real network — which
+    // presents as "0 satellites" and three opaque ERR_FAILEDs, with nothing to
+    // suggest the worker is the reason. Blocking it keeps this run about the
+    // app; scripts/dev/offline.mjs is the driver that exercises the worker.
+    serviceWorkers: 'block',
+  });
   await stubElementSources(context, makeRecords(600, { named: ['ISS (ZARYA)'] }));
   const page = await context.newPage();
   const errors = collectErrors(page);
@@ -60,7 +61,7 @@ async function newSession({ viewport, isMobile = false }) {
 }
 
 // --- Desktop ---------------------------------------------------------------
-console.log(`\nDesktop 1400x900${OFFLINE ? '  (offline CDN)' : ''}`);
+console.log('\nDesktop 1400x900');
 {
   const { context, page, errors } = await newSession({ viewport: { width: 1400, height: 900 } });
 
@@ -133,6 +134,39 @@ console.log('\nMobile 412x839 (touch)');
     () => !document.getElementById('panel-left').classList.contains('collapsed'),
   );
   check('tapping a sheet header expands it', opened);
+
+  // Display-cutout padding. Chromium cannot emulate a notch, so the tokens are
+  // overridden directly — which is the right test anyway: what broke in review
+  // was a `padding: 0 10px` shorthand in the mobile block quietly resetting the
+  // status-bar inset to zero, and only a rule that *consumes* the token
+  // survives that. Insets are zero on every real run of this driver, so this is
+  // the one place the padded layout is exercised at all.
+  const insets = await page.evaluate(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--safe-top', '44px');
+    root.style.setProperty('--safe-bottom', '34px');
+    const px = (s, p) => parseFloat(getComputedStyle(document.querySelector(s))[p]);
+    const out = {
+      topPad: px('#topbar', 'paddingTop'),
+      topHeight: px('#topbar', 'height'),
+      bottomPad: px('#timebar', 'paddingBottom'),
+      timebarEdge: Math.round(document.querySelector('#timebar').getBoundingClientRect().bottom),
+      viewport: window.innerHeight,
+    };
+    root.style.removeProperty('--safe-top');
+    root.style.removeProperty('--safe-bottom');
+    return out;
+  });
+  check(
+    'topbar clears the status-bar inset',
+    insets.topPad === 44 && insets.topHeight === 92,
+    `${insets.topPad}px padding, ${insets.topHeight}px tall`,
+  );
+  check(
+    'timebar clears the home indicator without leaving a gap',
+    insets.bottomPad === 34 && insets.timebarEdge === insets.viewport,
+    `${insets.bottomPad}px padding, bottom edge at ${insets.timebarEdge}/${insets.viewport}`,
+  );
 
   check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await context.close();

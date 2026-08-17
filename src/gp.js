@@ -174,6 +174,33 @@ async function fetchElements(cacheName, mirrorUrl, maxAge, force, timeoutMs) {
     };
   }
 
+  const staleCache = () => ({
+    records: cached.records,
+    fetchedAt: cached.fetchedAt,
+    fromCache: true,
+    source: 'browser-cache',
+    stale: true,
+  });
+
+  // With no network the attempt below can only time out, and the whole timeout
+  // is dead time in front of the user. Measured at 21.6s of "Fetching orbital
+  // elements…" when this was two attempts in series; one attempt is better and
+  // still a full timeout of nothing. Tolerable when this was a page you opened
+  // online, and not once the app is installed and launching out of signal is
+  // routine.
+  //
+  // `navigator.onLine` is only trusted in this one direction. It can wrongly
+  // report true behind a captive portal, which is why it never *stops* a fetch
+  // that might have worked — but a false is a real answer, and all it does here
+  // is skip ahead to the fallback the code would have reached anyway.
+  // `typeof` guarded because this module is also imported by the Node test
+  // suite, and `navigator` is only a global from Node 21 — CI runs 20, where a
+  // bare reference is a ReferenceError rather than an undefined.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    if (cached) return staleCache();
+    throw new Error('offline, and no orbital elements have been cached yet');
+  }
+
   let failure;
   try {
     const { data, fetchedAt } = await fetchJsonWithTimeout(
@@ -196,15 +223,7 @@ async function fetchElements(cacheName, mirrorUrl, maxAge, force, timeoutMs) {
     failure = error.message;
   }
 
-  if (cached) {
-    return {
-      records: cached.records,
-      fetchedAt: cached.fetchedAt,
-      fromCache: true,
-      source: 'browser-cache',
-      stale: true,
-    };
-  }
+  if (cached) return staleCache();
   throw new Error(`GP data unavailable (orbit-data: ${failure})`);
 }
 

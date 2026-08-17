@@ -167,6 +167,155 @@ term no longer exists; the sentence otherwise stands.
   browser data. `test/csp.test.mjs` asserts no directive permits `celestrak.org`
   *and* that the satcat link survives (no `navigate-to` directive).
 - No request was made to celestrak.org at any point in this work.
+## 2026-08-14 — "Is there a mobile app?": Orbit becomes installable
+
+Two users asked. The honest answer was that almost everything a mobile app needs
+was already there — the app is frontend-only, the panels became bottom sheets in
+the 08-09 pass, Sky mode already drives the camera from the orientation sensors
+— and what was missing was the packaging. So: a progressive web app, not a
+native shell. A React Native or native rewrite would mean discarding the three.js
+renderer, which is the app; a Capacitor wrapper is a store-listing decision
+rather than a technical one, and can still be built on top of this later.
+
+### Vendoring came first, and was not optional
+three.js, satellite.js, astronomy-engine and the four Earth textures were loaded
+from jsDelivr. A service worker cannot reliably pre-cache opaque cross-origin
+responses, so an offline launch would have come up to a blank globe no matter
+how the caching was written. They are now committed under `vendor/` (3.03 MiB),
+fetched by `npm run vendor`, with URL, version and sha256 per file in
+`vendor/VENDOR.json` and a test that re-hashes the tree against it.
+
+This is still not a build step — a fresh clone runs on `npm start` alone, which
+is the whole reason the files are committed rather than fetched at deploy time.
+
+Two things fell out of it that were not the point but are worth more than the
+caching:
+
+- **The CSP lost every external origin.** `script-src`, `worker-src` and
+  `img-src` are now `'self'` and nothing else; only `connect-src` still names
+  the two data hosts. No third party can execute in the app's origin any more.
+- **`ORBIT_OFFLINE_CDN` is gone.** The harness mode that routed import-map
+  modules to `node_modules` existed only because of the CDN, and it had to strip
+  the CSP to work — so the offline runs never exercised the real policy. Every
+  run now does.
+
+### The service worker is shaped by having no way to un-ship one
+Hosting is GitHub Pages, which cannot set response headers, so there is no
+`Cache-Control` lever if a release goes bad — the only recovery is a corrected
+deploy that clients pick up on their own schedule. Everything follows from that:
+
+- Navigations are **never** served cache-first. A deploy lands on the next
+  online load, and no cache can outlive one reload.
+- Static assets are stale-while-revalidate, so they self-heal a load later
+  rather than needing a version bump to expire.
+- A new worker never takes over mid-session: it installs, waits, and the page
+  offers a reload. Swapping modules under a running app is not worth the
+  freshness.
+- `?sw=off` clears every cache and unregisters, as a last resort.
+
+The pre-cache list is hand-written in `sw.js`, which drifts. `test/pwa.test.mjs`
+asserts every entry exists *and* that no module under `src/` or `styles/` is
+missing from it, so adding a module without listing it fails the suite instead of
+breaking the first offline launch — the one moment nobody can read a console.
+
+### Measured, not assumed
+Four defects, none of which a unit test or a diff would have shown:
+
+1. **The service worker silently bypassed the test stubs.** `context.route()`
+   does not intercept requests a worker makes on the page's behalf, so
+   `smoke.mjs` booted against the real network and reported `0 satellites` with
+   three opaque `ERR_FAILED`s and nothing pointing at the worker. Drivers that
+   stub now set `serviceWorkers: 'block'`; `offline.mjs` allows them, because
+   there the worker is the subject.
+2. **`register()` can resolve with `undefined` rather than rejecting**, where
+   service workers are disabled instead of unsupported — enterprise policy,
+   Firefox private browsing, a blocked Playwright context. Reading `.waiting`
+   off it threw an uncaught error at boot, on every viewport.
+3. **21.6 seconds of "Fetching orbital elements…" on an offline launch.** Two
+   doomed fetches timing out in series before falling back to exactly the cache
+   they could have read immediately — one attempt now that the CelesTrak
+   fallback is gone, but still a whole timeout of nothing. Skipping ahead when
+   `navigator.onLine === false` takes it to 1.7s. That flag is only trusted in
+   the one direction: it can wrongly say *true* behind a captive portal, so it
+   never stops a fetch that might have worked.
+4. **`navigator` is only a global from Node 21, and CI runs 20.** The check
+   above passed locally and would have been a `ReferenceError` in CI.
+
+`scripts/dev/offline.mjs` is the new driver, and the only thing that can prove
+the claim — though the first version of it proved nothing at all. See the
+follow-up below.
+
+### Follow-up, same day: the offline test was not testing offline
+
+Review (CodeQL, Codex, CodeRabbit) landed four real defects on top of the four
+above. The worst was one this worklog had already claimed was verified.
+
+**The pre-cache was written to one cache and read from another.** `install`
+fills `SHELL_CACHE`; the asset path served from `ASSET_CACHE`, which on a first
+offline launch is empty, because the page that populated the shell was not yet
+controlled. The navigation would fall back to the cached HTML and then every
+module, style and texture behind it would fail. Flagged independently by Codex
+and CodeRabbit; the fix is one lookup, and the interesting part is why it
+survived a driver written specifically to catch it:
+
+- **`context.setOffline(true)` does not apply to a service worker.** The
+  worker's own `fetch()` kept reaching the server throughout, so the run was
+  fully online and the pre-cache was never read.
+- **Chromium's HTTP cache covered the rest.** Even with the page offline, the
+  modules and textures were served from disk.
+- **The assertions could not fail.** A `<canvas>` exists whether or not any
+  script ran, and `getContext()` will happily create a context on a blank one.
+  `canvas.width > 0` passes at the default 300x150 — which is exactly what the
+  broken build produced.
+
+The driver now starts and stops its own server, so nothing but Cache Storage
+can serve the app, disables the HTTP cache as well, and asserts on UI that only
+`main.js` builds. Run against the unfixed worker it fails 4/7 with a 300x150
+buffer; fixed, 7/7. The lesson is not "test offline" — the file already claimed
+to. It is that a test which cannot fail is worse than no test, because it is
+quoted in a worklog as evidence.
+
+**Three more, all real.** `getRegistrations()` returns every registration for
+the *origin*, and GitHub Pages gives every project on an account the same one —
+so `?sw=off` would have unregistered other projects' workers as a side effect
+of recovering this one; it is now filtered to Orbit's own `sw.js`.
+`navigator.wakeLock.request()` can resolve after `disable()` has run, storing a
+lock nothing will ever release and leaving the screen awake for good; requests
+are now generation-guarded. And `vendor.mjs` hashed each download *after*
+fetching it and recorded that as the expected digest, so a tampered response
+would have been written down as the new truth and passed `--check` forever
+after — it now verifies against the committed digest whenever the pin has not
+moved, refuses to write on a mismatch, and requires `--accept-new` to adopt
+bytes it cannot check.
+
+CodeQL's remaining two alerts on `vendor.mjs` are the network-to-file pattern
+itself, which is what a vendoring script *is*. The integrity work above is the
+substantive answer; the alerts need a human decision to dismiss.
+
+### The rest
+`dvh` alongside `vh` (100vh is the *large* viewport on mobile, so the globe sat
+under the browser toolbar), `env(safe-area-inset-*)` on the topbar, timebar,
+sheets and both overlays — with `viewport-fit=cover`, without which those insets
+silently report zero — and a screen wake lock held while the clock runs, because
+the idle timer firing while you hold a phone up in Sky mode is the app failing at
+precisely the thing it is for.
+
+Icons are rendered from geometry by `scripts/make-icons.mjs` (supersampled
+coverage, hand-rolled PNG encoder — the project has no image dependency and this
+was not worth acquiring one for), so the committed binaries can be regenerated
+and are checked against the script.
+
+### Deliberately not done
+`localStorage` for the GP cache stays. Its writes already fail soft — a full
+quota costs a refetch, not a breakage — and installing *improves* its durability
+on iOS, where Safari exempts installed web apps from the seven-day eviction that
+clears a browser tab's storage. IndexedDB is an optimisation for a larger cached
+working set, not a fix for anything, and it is separable from all of the above.
+
+Also untested: real handset performance. 12,000 SGP4 propagations plus a
+textured globe is comfortable on a laptop GPU, and `smoke.mjs`'s phone viewport
+is still a desktop GPU pretending. If mobile needs an LOD or a satellite-count
+budget, that is a larger job than everything here combined.
 
 ## 2026-08-12 — "USA 224 is missing": objects with no element set
 

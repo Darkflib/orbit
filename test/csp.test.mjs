@@ -39,20 +39,46 @@ test('the CSP sha256 allow-list matches the inline import map', () => {
   );
 });
 
-test('the CSP permits the CDN-backed module worker and its source maps', () => {
+// The whole policy, asserted as an allow-list rather than by pattern.
+//
+// An earlier version of this test only rejected sources matching
+// `startsWith('http')`, which is a weaker check than it looks: CSP host-sources
+// need no scheme at all (`cdn.example.com` is valid and would have passed),
+// schemes match case-insensitively, and `//evil.example` is a valid source too.
+// Enumerating what is permitted has no such gaps — anything new has to be added
+// here deliberately, which is the review moment worth having.
+const EXPECTED = {
+  'default-src': ["'self'"],
+  'base-uri': ["'self'"],
+  'object-src': ["'none'"],
+  'worker-src': ["'self'"],
+  'img-src': ["'self'", 'data:'],
+  'style-src': ["'self'"],
+  'font-src': ["'self'"],
+  'manifest-src': ["'self'"],
+  'connect-src': ["'self'", 'https://orbit-data.mikepreston.org'],
+};
+
+test('every directive allows exactly what it is meant to and nothing more', () => {
+  for (const [directive, allowed] of Object.entries(EXPECTED)) {
+    assert.deepEqual(
+      directives[directive],
+      allowed,
+      `${directive} has drifted from its allow-list`,
+    );
+  }
+});
+
+test('script-src permits only this origin and the import-map hash', () => {
+  // Handled separately because the hash changes whenever the import map does,
+  // so it cannot be a literal in the table above.
+  const sources = directives['script-src'] ?? [];
+  const hashes = sources.filter((s) => /^'sha(256|384|512)-/.test(s));
+  assert.equal(hashes.length, 1, 'expected exactly one inline-script hash');
   assert.deepEqual(
-    directives['worker-src'],
-    ["'self'", 'https://cdn.jsdelivr.net'],
-    'worker-src must allow the satellite.js import used by the module worker',
-  );
-  assert.deepEqual(
-    directives['connect-src'],
-    [
-      "'self'",
-      'https://cdn.jsdelivr.net',
-      'https://orbit-data.mikepreston.org',
-    ],
-    'connect-src must allow the data mirror and jsDelivr source maps',
+    sources.filter((s) => !hashes.includes(s)),
+    ["'self'"],
+    'script-src must be this origin plus the import-map hash, nothing else',
   );
 });
 
@@ -128,4 +154,12 @@ test('the satcat link is a navigation the CSP does not restrict', () => {
     undefined,
     'a navigate-to directive would start policing link targets',
   );
+});
+
+test('the policy names no directive we have not accounted for', () => {
+  // A directive added without a matching expectation would otherwise sit here
+  // completely unchecked.
+  const known = new Set([...Object.keys(EXPECTED), 'script-src']);
+  const unexpected = Object.keys(directives).filter((d) => !known.has(d));
+  assert.deepEqual(unexpected, [], 'add these to the CSP test: ' + unexpected.join(', '));
 });

@@ -1,0 +1,66 @@
+{
+  "pins": {
+    "three": "0.160.0",
+    "satellite.js": "7.1.0",
+    "astronomy-engine": "2.1.19",
+    "three-examples": "r160"
+  },
+  "files": {
+    "three/three.module.js": {
+      "url": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "package": "three",
+      "version": "0.160.0",
+      "bytes": 1272972,
+      "sha256": "76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495"
+    },
+    "three/addons/controls/OrbitControls.js": {
+      "url": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js",
+      "package": "three",
+      "version": "0.160.0",
+      "bytes": 29868,
+      "sha256": "5a44a9e86a2a0fb11933eed69bc2cd33c76a496854c1aed6ed776efa87d7b064"
+    },
+    "satellite.js/satellite.js": {
+      "url": "https://cdn.jsdelivr.net/npm/satellite.js@7.1.0/+esm",
+      "package": "satellite.js",
+      "version": "7.1.0",
+      "bytes": 39647,
+      "sha256": "2687791fca0c7dc00cadbfa42e5956f5f731340eb2e084e69fb1c1004e66d0b4"
+    },
+    "astronomy-engine/astronomy.js": {
+      "url": "https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/+esm",
+      "package": "astronomy-engine",
+      "version": "2.1.19",
+      "bytes": 106529,
+      "sha256": "4338252011eef71bf828b0fbea3c2f16d243fa17697902dcf06ffc4107078161"
+    },
+    "textures/earth_atmos_2048.jpg": {
+      "url": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_atmos_2048.jpg",
+      "package": "three-examples",
+      "version": "r160",
+      "bytes": 512606,
+      "sha256": "2faa400d1eade3bc44caf6750d1b772bd9bbb6d87362c02bc7c3304e78fa0a9d"
+    },
+    "textures/earth_specular_2048.jpg": {
+      "url": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_specular_2048.jpg",
+      "package": "three-examples",
+      "version": "r160",
+      "bytes": 223421,
+      "sha256": "2df48906732d7a458b2d0a7cdec51a829262307c6bdee4cfdf079a4dd7c71c69"
+    },
+    "textures/earth_clouds_1024.png": {
+      "url": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_clouds_1024.png",
+      "package": "three-examples",
+      "version": "r160",
+      "bytes": 260222,
+      "sha256": "7d3b82ef6b3feb506fc06f02a744aed3d864e23e7417075005f4082a7ff935a4"
+    },
+    "textures/earth_lights_2048.png": {
+      "url": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/earth_lights_2048.png",
+      "package": "three-examples",
+      "version": "r160",
+      "bytes": 734910,
+      "sha256": "3cc6972d1d5b6310f33ea6ef4cc14a38f1dd141a91d26888206889327d983d7b"
+    }
+  }
+}

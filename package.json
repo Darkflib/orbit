@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node serve.mjs",
     "dev": "node serve.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "vendor": "node scripts/vendor.mjs",
+    "vendor:check": "node scripts/vendor.mjs --check",
+    "icons": "node scripts/make-icons.mjs"
   },
   "devDependencies": {
     "astronomy-engine": "2.1.19",

@@ -25,6 +25,8 @@ import {
   SEARCH_LIMIT, CATALOGUE_SEARCH_MIN,
 } from './search.js';
 import { createSkyView } from './skyview.js';
+import { registerServiceWorker } from './pwa.js';
+import { createWakeLock } from './wakelock.js';
 
 // ---- DOM handles ----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -109,12 +111,30 @@ const MOBILE_MQ = window.matchMedia('(max-width: 720px)');
 const isMobile = () => MOBILE_MQ.matches;
 let satCount = 0;   // remembered so the stats pill can be re-rendered on resize
 
+// Held while the clock is running, which is the state where the app is showing
+// motion and the user is most likely watching rather than touching. Paused, the
+// screen is welcome to sleep.
+const wakeLock = createWakeLock();
+
 buildLayerToggles();
 buildSpeedButtons();
 buildSkipButtons();
 wireControls();
 animate();
 setMode('tracker'); // loads the default catalogue
+wakeLock.enable();
+
+// Offline support. Registered after the scene is up rather than before, so a
+// slow or failing registration cannot delay first paint — nothing on the
+// critical path depends on it, and the app is fully usable without it.
+registerServiceWorker({
+  onUpdateReady: (apply) => {
+    // Sticky, and only applied when clicked: reloading out from under someone
+    // tracking a pass would lose their selection and their place in time.
+    toast('A new version of Orbit is ready — tap to reload.', true);
+    $('error-toast').onclick = apply;
+  },
+});
 
 // ---- Data loading ---------------------------------------------------------
 async function loadData(layers, opts = {}) {
@@ -139,9 +159,15 @@ async function loadData(layers, opts = {}) {
     hideLoading();
   } catch (err) {
     hideLoading();
+    // The file:// advice is right for a failed fetch and actively confusing for
+    // a launch with no network, which is now a routine way to open an installed
+    // app rather than an edge case.
     toast(
-      `Could not load GP data: ${err.message}. The data services may be unreachable, or the ` +
-      `page is opened from file:// (serve it over http and retry).`,
+      navigator.onLine === false
+        ? 'Offline, and no orbital elements are cached yet. Open Orbit once with a '
+          + 'connection and it will keep working without one.'
+        : `Could not load GP data: ${err.message}. The data services may be unreachable, or the `
+          + `page is opened from file:// (serve it over http and retry).`,
       true,
     );
     console.error(err);
@@ -827,6 +853,8 @@ function wireControls() {
   $('btn-play').addEventListener('click', () => {
     clock.playing = !clock.playing;
     $('btn-play').textContent = clock.playing ? '❚❚' : '►';
+    if (clock.playing) wakeLock.enable();
+    else wakeLock.disable();
   });
   $('btn-now').addEventListener('click', () => {
     clock.toNow();
@@ -845,6 +873,7 @@ function wireControls() {
     if (!est || est.reentryMs == null) return;
     clock.playing = false;
     $('btn-play').textContent = '►';
+    wakeLock.disable();
     clock.jumpTo(est.reentryMs);
     clock.speed = 1;
     buildSpeedButtons();

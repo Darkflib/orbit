@@ -324,8 +324,12 @@ export const SPEEDS = [1, 10, 60, 300, 1500];
 // Number of samples used to draw a selected satellite's orbit / ground track.
 export const ORBIT_SAMPLES = 240;
 
-// Earth textures (equirectangular), from the three.js example assets.
-const TEX_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/textures/planets/';
+// Earth textures (equirectangular), vendored from the three.js example assets.
+// Resolved against this module rather than written as a document-relative path:
+// TextureLoader resolves a bare relative URL against the *page*, which differs
+// from src/ the moment the app is served from a subpath (as it is on GitHub
+// Pages), and the failure mode is four silent 404s and an untextured globe.
+const TEX_BASE = new URL('../vendor/textures/', import.meta.url).href;
 export const TEXTURES = {
   day: TEX_BASE + 'earth_atmos_2048.jpg',
   specular: TEX_BASE + 'earth_specular_2048.jpg',

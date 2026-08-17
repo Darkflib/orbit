@@ -6,7 +6,10 @@
 // Running this off the main thread keeps rendering and interaction at 60fps
 // even with many thousands of satellites.
 // ---------------------------------------------------------------------------
-import * as satellite from 'https://cdn.jsdelivr.net/npm/satellite.js@7.1.0/+esm';
+// Resolved relative to this file, not through the page's import map: module
+// workers do not get one. The worker is constructed from `new URL('./worker.js',
+// import.meta.url)`, so this path is relative to src/.
+import * as satellite from '../vendor/satellite.js/satellite.js';
 
 // Keep in sync with constants.js (worker cannot use the page's import map).
 const KM_PER_UNIT = 1000;
