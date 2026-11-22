@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "astronomy-engine": "2.1.19",
-    "satellite.js": "7.1.0"
+    "satellite.js": "7.2.0"
   },
   "keywords": [
     "satellites",
